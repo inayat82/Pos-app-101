@@ -57,3 +57,5 @@ test-*.js
 *_GUIDE.md
 VERCEL_*.txt
 VERCEL_*.md
+
+.vercel
