@@ -69,13 +69,21 @@ const defaultProductStrategies: SyncStrategy[] = [
   { id: 'prd_all_12h', description: 'Fetch & Optimize All', cronLabel: 'Every 12 hr', cronEnabled: false },
 ];
 
-const TakealotSettingsPage = ({ params }: { params: { integrationId: string } }) => {
+const TakealotSettingsPage = ({ params }: { params: Promise<{ integrationId: string }> }) => {
   const { currentUser } = useAuth();
   const { setPageTitle } = usePageTitle();
   const router = useRouter();
   
   // Get integrationId from params
-  const { integrationId } = params;
+  const [integrationId, setIntegrationId] = useState<string>('');
+  
+  useEffect(() => {
+    const resolveParams = async () => {
+      const resolvedParams = await params;
+      setIntegrationId(resolvedParams.integrationId);
+    };
+    resolveParams();
+  }, [params]);
   
   // Use the integration hook
   const { integration: hookIntegration, isLoading: isLoadingIntegration } = useTakealotIntegration(integrationId);

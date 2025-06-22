@@ -45,7 +45,7 @@ export async function calculateProductSalesMetrics(
     thirtyDaysAgo.setDate(now.getDate() - 30);
 
     // Try to get sales data from multiple collections
-    const salesCollections = ['takealotSales', 'takealot_sales', 'sales'];
+    const salesCollections = ['takealot_sales']; // Use only the correct Takealot API data collection
     let allSalesData: SalesData[] = [];
 
     for (const collectionName of salesCollections) {

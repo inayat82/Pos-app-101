@@ -1,12 +1,11 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { FiSearch, FiRefreshCw, FiPackage, FiExternalLink, FiEye, FiFilter, FiX, FiEdit } from 'react-icons/fi';
+import { FiSearch, FiRefreshCw, FiPackage, FiExternalLink, FiEye, FiFilter, FiX, FiEdit, FiTarget } from 'react-icons/fi';
 import { useAuth } from '@/context/AuthContext';
 import { usePageTitle } from '@/context/PageTitleContext';
 import { db } from '@/lib/firebase/firebase';
 import { collection, query, where, getDocs } from 'firebase/firestore';
-import { calculateBatchSalesMetrics } from '@/lib/salesCalculationService';
 
 interface Product {
   sku: string;
@@ -32,12 +31,14 @@ interface Product {
   [key: string]: any;
 }
 
-export default function TakealotProductsPage({ params }: { params: { integrationId: string } }) {
+export default function TakealotProductsPage({ params }: { params: Promise<{ integrationId: string }> }) {
   const { currentUser } = useAuth();
   const { setPageTitle } = usePageTitle();
-  const { integrationId } = params;  const [products, setProducts] = useState<Product[]>([]);
+  
+  // Fix for Next.js 15 - params are now async
+  const resolvedParams = React.use(params);
+  const { integrationId } = resolvedParams;const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
-  const [loadingSales, setLoadingSales] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(100);const [showFilters, setShowFilters] = useState(false);
@@ -80,8 +81,7 @@ export default function TakealotProductsPage({ params }: { params: { integration
           const stockAtTakealot = data.stock_at_takealot || [];
           const stockOnWay = data.stock_on_way || [];
           const salesUnits = data.sales_units || [];
-          
-          return {
+            return {
             sku: data.sku || data.product_label_number || 'N/A',
             title: data.title || 'Unnamed Product',
             price: data.selling_price || 0,
@@ -90,17 +90,25 @@ export default function TakealotProductsPage({ params }: { params: { integration
             stock: data.stock_at_takealot_total || 0,
             status: data.status || 'Unknown',
             image_url: data.image_url,
-            tsin_id: data.tsin_id,            // Additional fields for detailed view - extracted from arrays
+            tsin_id: data.tsin_id,
+            // Additional fields for detailed view - extracted from arrays
             stock_dbn: stockAtTakealot.find((s: any) => s.warehouse?.name === 'DBN')?.quantity_available || 0,
             stock_cpt: stockAtTakealot.find((s: any) => s.warehouse?.name === 'CPT')?.quantity_available || 0,
-            stock_jhb: stockAtTakealot.find((s: any) => s.warehouse?.name === 'JHB')?.quantity_available || 0,
-            stock_on_way: data.total_stock_on_way || 0,
-            // New fields for enhanced functionality
-            pos_barcode: data.barcode || '', // Use API barcode as placeholder
-            qty_require: 0, // estimated - needs business logic
-            total_sold: salesUnits.reduce((sum: number, unit: any) => sum + (unit.sales_units || 0), 0) || 0,
-            sold_30_days: 0, // needs time-based calculation
-            returned_30_days: 0, // needs return data
+            stock_jhb: stockAtTakealot.find((s: any) => s.warehouse?.name === 'JHB')?.quantity_available || 0,            stock_on_way: data.total_stock_on_way || 0,
+            // POS integration fields
+            pos_barcode: data.barcode || '', // Use API barcode as placeholder            // CALCULATED METRICS (prioritize TSIN-based calculations with debugging)
+            qty_require: data.tsinCalculatedMetrics?.qtyRequire || data.calculatedMetrics?.qtyRequire || data.qtyRequire || 0,
+            total_sold: data.tsinCalculatedMetrics?.totalSold || data.calculatedMetrics?.totalSold || data.totalSold || 0,
+            sold_30_days: data.tsinCalculatedMetrics?.last30DaysSold || data.calculatedMetrics?.last30DaysSold || data.last30DaysSold || 0,
+            returned_30_days: data.tsinCalculatedMetrics?.last30DaysReturn || data.calculatedMetrics?.last30DaysReturn || data.last30DaysReturn || 0,
+            avg_selling_price: data.tsinCalculatedMetrics?.avgSellingPrice || data.calculatedMetrics?.avgSellingPrice || data.avgSellingPrice || data.selling_price || 0,
+            return_rate: data.tsinCalculatedMetrics?.returnRate || data.calculatedMetrics?.returnRate || data.returnRate || 0,
+            days_since_last_order: data.tsinCalculatedMetrics?.daysSinceLastOrder || data.calculatedMetrics?.daysSinceLastOrder || data.daysSinceLastOrder || 999,
+            // Metadata for tracking calculations (IMPORTANT FOR DEBUGGING)
+            calculation_method: data.calculationMethod || (data.tsinCalculatedMetrics ? 'TSIN-based' : 'Legacy'),
+            metrics_last_calculated: data.tsinCalculatedMetrics?.lastCalculated || data.calculatedMetrics?.lastCalculated || null,
+            has_tsin_metrics: !!data.tsinCalculatedMetrics,
+            has_legacy_metrics: !!data.calculatedMetrics,
           };
         });
         setProducts(productData);
@@ -119,8 +127,7 @@ export default function TakealotProductsPage({ params }: { params: { integration
           const stockAtTakealot = data.stock_at_takealot || [];
           const stockOnWay = data.stock_on_way || [];
           const salesUnits = data.sales_units || [];
-          
-          return {
+            return {
             sku: data.sku || data.product_label_number || 'N/A',
             title: data.title || 'Unnamed Product',
             price: data.selling_price || 0,
@@ -135,72 +142,41 @@ export default function TakealotProductsPage({ params }: { params: { integration
             stock_cpt: stockAtTakealot.find((s: any) => s.warehouse?.name === 'CPT')?.quantity_available || 0,
             stock_jhb: stockAtTakealot.find((s: any) => s.warehouse?.name === 'JHB')?.quantity_available || 0,
             stock_on_way: data.total_stock_on_way || 0,
-            // New fields for enhanced functionality
+            // POS integration fields
             pos_barcode: data.barcode || '', // Use API barcode as placeholder
-            qty_require: 0, // estimated - needs business logic
-            total_sold: salesUnits.reduce((sum: number, unit: any) => sum + (unit.sales_units || 0), 0) || 0,
-            sold_30_days: 0, // needs time-based calculation
-            returned_30_days: 0, // needs return data
-          };        });
-        
-        // Set products first with basic data
+            // CALCULATED METRICS (from database calculations)
+            qty_require: data.qtyRequire || data.calculatedMetrics?.qtyRequire || 0,
+            total_sold: data.totalSold || data.calculatedMetrics?.totalSold || 0,
+            sold_30_days: data.last30DaysSold || data.calculatedMetrics?.last30DaysSold || 0,
+            returned_30_days: data.last30DaysReturn || data.calculatedMetrics?.last30DaysReturn || 0,
+            avg_selling_price: data.avgSellingPrice || data.calculatedMetrics?.avgSellingPrice || data.selling_price || 0,
+            return_rate: data.returnRate || data.calculatedMetrics?.returnRate || 0,
+            days_since_last_order: data.daysSinceLastOrder || data.calculatedMetrics?.daysSinceLastOrder || 999,
+            // Metadata for tracking calculations
+            metrics_last_calculated: data.metricsLastCalculated || data.calculatedMetrics?.lastCalculated || null,
+          };});        
+        // Set products with calculated data
         setProducts(productData);
-        
-        // Calculate sales metrics in background
-        calculateSalesMetrics(productData);
       }
 
     } catch (error) {
       console.error('Error loading products:', error);
     } finally {
       setLoading(false);
-    }
-  };
+    }  };
 
-  // Function to calculate sales metrics for products
-  const calculateSalesMetrics = async (productData: Product[]) => {
-    if (productData.length === 0) return;
-    
-    try {
-      setLoadingSales(true);
-      console.log('Calculating sales metrics for products...');
-
-      // Prepare data for batch calculation
-      const productMetrics = productData.map(product => ({
-        sku: product.sku,
-        tsin_id: product.tsin_id,
-        stock: product.stock
-      }));
-
-      // Calculate sales metrics in batches
-      const salesMetricsMap = await calculateBatchSalesMetrics(integrationId, productMetrics);
-
-      // Update products with calculated metrics
-      const updatedProducts = productData.map(product => {
-        const metrics = salesMetricsMap.get(product.sku);
-        if (metrics) {
-          return {
-            ...product,
-            total_sold: metrics.totalSold,
-            sold_30_days: metrics.sold30Days,
-            returned_30_days: metrics.returned30Days,
-            qty_require: metrics.qtyRequire
-          };
-        }
-        return product;
-      });
-
-      setProducts(updatedProducts);
-      console.log('Sales metrics calculation completed');
-    } catch (error) {
-      console.error('Error calculating sales metrics:', error);
-    } finally {
-      setLoadingSales(false);
-    }
-  };  // Enhanced filtering and sorting function
+  // Enhanced filtering and sorting function
   const filteredAndSortedProducts = () => {
     let filtered = products.filter(product => {
-      if (!searchTerm.trim()) return true;
+      if (!searchTerm.trim()) {
+        // When no search term, apply status filter
+        const matchesStatus = filters.status.length === 0 || 
+                             filters.status.some(status => 
+                               product.status && typeof product.status === 'string' && 
+                               product.status.toLowerCase().includes(status.toLowerCase())
+                             );
+        return matchesStatus;
+      }
       
       const searchLower = searchTerm.toLowerCase();
       const matchesSearch = 
@@ -209,7 +185,7 @@ export default function TakealotProductsPage({ params }: { params: { integration
         (product.tsin_id && String(product.tsin_id).toLowerCase().includes(searchLower)) ||
         (product.pos_barcode && typeof product.pos_barcode === 'string' && product.pos_barcode.toLowerCase().includes(searchLower));
       
-      // Updated to work with array of status values
+      // Apply status filter along with search
       const matchesStatus = filters.status.length === 0 || 
                            filters.status.some(status => 
                              product.status && typeof product.status === 'string' && product.status.toLowerCase().includes(status.toLowerCase())
@@ -218,7 +194,7 @@ export default function TakealotProductsPage({ params }: { params: { integration
       return matchesSearch && matchesStatus;
     });
 
-    // Apply sorting
+    // Apply sorting (default: sold_30_days desc to show most sold first)
     filtered.sort((a, b) => {
       let aValue: any, bValue: any;
       
@@ -364,15 +340,26 @@ export default function TakealotProductsPage({ params }: { params: { integration
           <div className="flex justify-between items-center">            <div>
               <h1 className="text-2xl font-bold text-gray-900">Takealot Products</h1>
               <div className="flex items-center space-x-4">
-                <p className="text-gray-600">{filteredProducts.length} products found</p>
-                {loadingSales && (
-                  <div className="flex items-center text-blue-600">
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
-                    <span className="text-sm">Calculating sales metrics...</span>
-                  </div>
-                )}
+                <p className="text-gray-600">
+                  {filteredProducts.length} products found
+                  {filteredProducts.length !== products.length && (
+                    <span className="text-sm text-blue-600 ml-1">
+                      (filtered from {products.length} total)
+                    </span>
+                  )}
+                </p>
+                {/* Active Filter Summary */}
+                {filters.status.length > 0 && filters.status.length < 4 && (
+                  <div className="flex items-center gap-1">
+                    <span className="text-sm text-gray-500">Showing:</span>
+                    {filters.status.map((status, index) => (
+                      <span key={status} className="inline-flex items-center px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 rounded-full">
+                        {status}
+                      </span>
+                    ))}
+                  </div>                )}
               </div>
-            </div>            <div className="flex items-center space-x-3">
+            </div><div className="flex items-center space-x-3">
               <button
                 onClick={() => setShowFilters(!showFilters)}
                 className={`flex items-center px-4 py-2 text-sm font-medium rounded-lg border transition-colors ${
@@ -438,9 +425,15 @@ export default function TakealotProductsPage({ params }: { params: { integration
                 ? 'Go to Settings to fetch product data from Takealot API.'
                 : 'Try adjusting your search terms or filters.'}
             </p>
-          </div>
-        ) : (
+          </div>        ) : (
           <div className="bg-white rounded-lg shadow-sm overflow-hidden">
+            {/* Sorting Info */}
+            <div className="px-4 py-2 bg-gray-50 border-b border-gray-200">
+              <p className="text-xs text-gray-600">
+                <strong>Default sorting:</strong> Products ordered by most sold in last 30 days (highest first). 
+                Click column headers to change sorting.
+              </p>
+            </div>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">                <thead className="bg-gray-50">
                   <tr>
@@ -613,18 +606,61 @@ export default function TakealotProductsPage({ params }: { params: { integration
                         <span className="text-orange-600 font-medium">
                           {product.qty_require || 0}
                         </span>
-                      </td>
-
-                      <td className="px-4 py-4 text-sm text-gray-900 font-medium">
-                        {product.total_sold || 0}
+                      </td>                      <td className="px-4 py-4 text-sm text-gray-900 font-medium">
+                        <div className="flex items-center space-x-2">
+                          <span>{product.total_sold || 0}</span>
+                          {product.has_tsin_metrics ? (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800" title="TSIN-based calculation">
+                              T
+                            </span>
+                          ) : product.has_legacy_metrics ? (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-800" title="Legacy calculation">
+                              L
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800" title="No calculation">
+                              -
+                            </span>
+                          )}
+                        </div>
                       </td>
 
                       <td className="px-4 py-4 text-sm text-blue-600 font-medium">
-                        {product.sold_30_days || 0}
+                        <div className="flex items-center space-x-2">
+                          <span>{product.sold_30_days || 0}</span>
+                          {product.has_tsin_metrics ? (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800" title="TSIN-based calculation">
+                              T
+                            </span>
+                          ) : product.has_legacy_metrics ? (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-800" title="Legacy calculation">
+                              L
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800" title="No calculation">
+                              -
+                            </span>
+                          )}
+                        </div>
                       </td>
 
                       <td className="px-4 py-4 text-sm text-red-600 font-medium">
-                        {product.returned_30_days || 0}
+                        <div className="flex items-center space-x-2">
+                          <span>{product.returned_30_days || 0}</span>
+                          {product.has_tsin_metrics ? (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800" title="TSIN-based calculation">
+                              T
+                            </span>
+                          ) : product.has_legacy_metrics ? (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-800" title="Legacy calculation">
+                              L
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800" title="No calculation">
+                              -
+                            </span>
+                          )}
+                        </div>
                       </td>
                       
                       <td className="px-4 py-4">
@@ -686,6 +722,56 @@ export default function TakealotProductsPage({ params }: { params: { integration
             )}
           </div>
         )}
+
+        {/* Calculation Status Indicator */}
+        {products.length > 0 && (
+          <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center">
+                <FiTarget className="h-5 w-5 text-blue-600 mr-3" />
+                <div>
+                  <h4 className="text-sm font-semibold text-blue-900">Calculation Status Overview</h4>
+                  <p className="text-xs text-blue-700 mt-1">
+                    Showing calculation method distribution across your products
+                  </p>
+                </div>
+              </div>
+              <div className="text-xs text-blue-600 font-medium">
+                {products.length} products loaded
+              </div>
+            </div>
+            
+            <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="bg-white rounded-lg p-3 border border-blue-100">
+                <div className="text-lg font-bold text-green-700">
+                  {products.filter(p => p.has_tsin_metrics).length}
+                </div>
+                <div className="text-xs text-green-600">TSIN-based calculations</div>
+                <div className="text-xs text-green-500 mt-1">⚡ Enhanced & faster</div>
+              </div>
+              <div className="bg-white rounded-lg p-3 border border-orange-100">
+                <div className="text-lg font-bold text-orange-700">
+                  {products.filter(p => p.has_legacy_metrics && !p.has_tsin_metrics).length}
+                </div>
+                <div className="text-xs text-orange-600">Legacy calculations only</div>
+                <div className="text-xs text-orange-500 mt-1">📊 Needs upgrade</div>
+              </div>
+              <div className="bg-white rounded-lg p-3 border border-gray-100">
+                <div className="text-lg font-bold text-gray-700">
+                  {products.filter(p => !p.has_tsin_metrics && !p.has_legacy_metrics).length}
+                </div>
+                <div className="text-xs text-gray-600">No calculations</div>
+                <div className="text-xs text-gray-500 mt-1">⚠️ Run recalculation</div>
+              </div>
+            </div>
+            
+            {products.filter(p => !p.has_tsin_metrics && !p.has_legacy_metrics).length > 0 && (
+              <div className="mt-3 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-800">
+                <strong>Tip:</strong> Go to Reports → Product Performance and click "Recalc Metrics (TSIN)" to calculate missing metrics.
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Right Sidebar - Filters */}
@@ -701,6 +787,14 @@ export default function TakealotProductsPage({ params }: { params: { integration
                 <FiX className="h-5 w-5" />
               </button>
             </div>            <div className="space-y-6">
+              {/* Filter Info */}
+              <div className="bg-blue-50 p-3 rounded-lg border border-blue-200">
+                <p className="text-sm text-blue-800">
+                  <strong>Default:</strong> Showing only "Buyable" and "Not Buyable" products to reduce load time.
+                  Other statuses are hidden by default.
+                </p>
+              </div>
+
               {/* Status Filter */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-3">Product Status</label>
@@ -719,6 +813,9 @@ export default function TakealotProductsPage({ params }: { params: { integration
                         className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
                       />
                       <span className="ml-2 text-sm text-gray-700">{status}</span>
+                      {['Buyable', 'Not Buyable'].includes(status) && (
+                        <span className="ml-2 text-xs text-blue-600">(default)</span>
+                      )}
                     </label>
                   ))}
                 </div>

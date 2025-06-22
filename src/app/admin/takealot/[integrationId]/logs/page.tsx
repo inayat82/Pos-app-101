@@ -27,14 +27,22 @@ interface TakealotIntegration {
 }
 
 interface LogsPageProps {
-  params: { integrationId: string };
+  params: Promise<{ integrationId: string }>;
 }
 
 const LogsPage: React.FC<LogsPageProps> = ({ params }) => {
-  const { integrationId } = params;
+  const [integrationId, setIntegrationId] = useState<string>('');
   const { currentUser } = useAuth();
   const { setPageTitle } = usePageTitle();
   const router = useRouter();
+
+  useEffect(() => {
+    const resolveParams = async () => {
+      const resolvedParams = await params;
+      setIntegrationId(resolvedParams.integrationId);
+    };
+    resolveParams();
+  }, [params]);
 
   // State
   const [integration, setIntegration] = useState<TakealotIntegration | null>(null);

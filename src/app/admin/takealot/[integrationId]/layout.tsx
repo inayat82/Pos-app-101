@@ -19,20 +19,27 @@ export default function TakealotIntegrationLayout({
   params,
 }: {
   children: React.ReactNode;
-  params: { integrationId: string };
+  params: Promise<{ integrationId: string }>;
 }) {
   const { currentUser } = useAuth();
   const router = useRouter();
   const [integration, setIntegration] = useState<TakealotIntegration | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [integrationId, setIntegrationId] = useState<string>('');
 
   useEffect(() => {
-    if (!currentUser?.uid || !params.integrationId) return;
+    const resolveParams = async () => {
+      const resolvedParams = await params;
+      setIntegrationId(resolvedParams.integrationId);
+    };
+    resolveParams();
+  }, [params]);
 
-    const fetchIntegration = async () => {
+  useEffect(() => {
+    if (!currentUser?.uid || !integrationId) return;    const fetchIntegration = async () => {
       try {
-        const integrationDoc = await getDoc(doc(db, 'takealotIntegrations', params.integrationId));
+        const integrationDoc = await getDoc(doc(db, 'takealotIntegrations', integrationId));
         
         if (!integrationDoc.exists()) {
           setError('Integration not found');
@@ -58,7 +65,7 @@ export default function TakealotIntegrationLayout({
     };
 
     fetchIntegration();
-  }, [currentUser?.uid, params.integrationId]);
+  }, [currentUser?.uid, integrationId]);
 
   if (isLoading) {
     return (

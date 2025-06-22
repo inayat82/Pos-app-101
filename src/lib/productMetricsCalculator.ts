@@ -48,7 +48,7 @@ export async function calculateProductMetrics(
 
   try {
     // Get sales data from multiple possible collections
-    const salesCollections = ['takealotSales', 'takealot_sales', 'sales'];
+    const salesCollections = ['takealot_sales']; // Use only the correct Takealot API data collection
     
     for (const collectionName of salesCollections) {
       try {

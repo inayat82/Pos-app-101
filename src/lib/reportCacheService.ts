@@ -106,15 +106,15 @@ export async function getOptimizedProductData(integrationId: string) {
     // Get current date and 30 days ago for calculations
     const now = new Date();
     const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(now.getDate() - 30);
-
-    // Process each product with comprehensive data
+    thirtyDaysAgo.setDate(now.getDate() - 30);    // Process each product with comprehensive data
     const productDataPromises = offersSnapshot.docs.map(async (doc) => {
       const data = doc.data();
       const salesUnits = data.sales_units || [];
       const stockTotal = data.stock_at_takealot_total || 0;
       const sku = data.sku || data.product_label_number || 'N/A';
-      const tsinId = data.tsin_id;      // Initialize sales metrics
+      const tsinId = data.tsin_id; // TSIN is now the primary identifier
+
+      // Initialize sales metrics
       let totalSold = 0;
       let totalReturn = 0;
       let last30DaysSold = 0;
@@ -123,70 +123,138 @@ export async function getOptimizedProductData(integrationId: string) {
       let foundSalesData = false;
 
       // Try to get detailed sales data from sales collections
+      // PRIORITIZE TSIN-BASED QUERIES FIRST
       try {
-        const salesCollections = ['takealot_sales', 'takealotSales', 'sales'];
+        const salesCollections = ['takealot_sales']; // Use only the correct Takealot API data collection
         
         for (const collectionName of salesCollections) {
           try {
-            const salesQuery = query(
-              collection(db, collectionName),
-              where('integrationId', '==', integrationId),
-              where('sku', '==', sku)
-            );
-            
-            const salesSnapshot = await getDocs(salesQuery);
-            
-            if (salesSnapshot.size > 0) {
-              console.log(`Found ${salesSnapshot.size} sales records for SKU ${sku} in ${collectionName}`);
-              foundSalesData = true;
-              
-              salesSnapshot.forEach(saleDoc => {
-                const sale = saleDoc.data();
-                const quantity = sale.quantity || sale.quantity_sold || sale.units_sold || 1;
-                const orderDate = sale.order_date || sale.sale_date;
+            // PRIMARY: Query by TSIN if available (most reliable)
+            if (tsinId) {
+              const tsinQueries = [
+                query(
+                  collection(db, collectionName),
+                  where('integrationId', '==', integrationId),
+                  where('tsin_id', '==', tsinId)
+                ),
+                query(
+                  collection(db, collectionName),
+                  where('integrationId', '==', integrationId),
+                  where('tsin', '==', tsinId) // Alternative field name
+                )
+              ];
+
+              for (const tsinQuery of tsinQueries) {
+                const salesSnapshot = await getDocs(tsinQuery);
                 
-                if (orderDate) {
-                  const saleDate = new Date(orderDate);
-                  if (!isNaN(saleDate.getTime())) {
-                    // Calculate days since last order
-                    const daysDiff = Math.floor((now.getTime() - saleDate.getTime()) / (1000 * 60 * 60 * 24));
-                    if (daysDiff < daysSinceLastOrder) {
-                      daysSinceLastOrder = daysDiff;
-                    }
+                if (salesSnapshot.size > 0) {
+                  console.log(`Found ${salesSnapshot.size} sales records for TSIN ${tsinId} in ${collectionName}`);
+                  foundSalesData = true;
+                  
+                  salesSnapshot.forEach(saleDoc => {
+                    const sale = saleDoc.data();
+                    const quantity = sale.quantity || sale.quantity_sold || sale.units_sold || 1;
+                    const orderDate = sale.order_date || sale.sale_date;
                     
-                    // Check if it's a return
-                    const isReturn = sale.is_return || 
-                                   sale.return_status || 
-                                   (sale.order_status && sale.order_status.toLowerCase().includes('return')) ||
-                                   quantity < 0;
-                    
-                    if (isReturn) {
-                      totalReturn += Math.abs(quantity);
-                      if (saleDate >= thirtyDaysAgo) {
-                        last30DaysReturn += Math.abs(quantity);
+                    if (orderDate) {
+                      const saleDate = new Date(orderDate);
+                      if (!isNaN(saleDate.getTime())) {
+                        // Calculate days since last order
+                        const daysDiff = Math.floor((now.getTime() - saleDate.getTime()) / (1000 * 60 * 60 * 24));
+                        if (daysDiff < daysSinceLastOrder) {
+                          daysSinceLastOrder = daysDiff;
+                        }
+                        
+                        // Check if it's a return
+                        const isReturn = sale.is_return || 
+                                       sale.return_status || 
+                                       (sale.order_status && sale.order_status.toLowerCase().includes('return')) ||
+                                       quantity < 0;
+                        
+                        if (isReturn) {
+                          totalReturn += Math.abs(quantity);
+                          if (saleDate >= thirtyDaysAgo) {
+                            last30DaysReturn += Math.abs(quantity);
+                          }
+                        } else {
+                          totalSold += quantity;
+                          if (saleDate >= thirtyDaysAgo) {
+                            last30DaysSold += quantity;
+                          }
+                        }
                       }
-                    } else {
-                      totalSold += quantity;
-                      if (saleDate >= thirtyDaysAgo) {
-                        last30DaysSold += quantity;
+                    }
+                  });
+                  
+                  break; // Found TSIN data, no need to check SKU
+                }
+              }
+              
+              if (foundSalesData) break; // Found TSIN data, move to next collection
+            }
+
+            // FALLBACK: Query by SKU only if TSIN data not found
+            if (!foundSalesData && sku && sku !== 'N/A') {
+              const salesQuery = query(
+                collection(db, collectionName),
+                where('integrationId', '==', integrationId),
+                where('sku', '==', sku)
+              );
+              
+              const salesSnapshot = await getDocs(salesQuery);
+              
+              if (salesSnapshot.size > 0) {
+                console.log(`Found ${salesSnapshot.size} sales records for SKU ${sku} in ${collectionName} (TSIN fallback)`);
+                foundSalesData = true;
+                
+                salesSnapshot.forEach(saleDoc => {
+                  const sale = saleDoc.data();
+                  const quantity = sale.quantity || sale.quantity_sold || sale.units_sold || 1;
+                  const orderDate = sale.order_date || sale.sale_date;
+                  
+                  if (orderDate) {
+                    const saleDate = new Date(orderDate);
+                    if (!isNaN(saleDate.getTime())) {
+                      // Calculate days since last order
+                      const daysDiff = Math.floor((now.getTime() - saleDate.getTime()) / (1000 * 60 * 60 * 24));
+                      if (daysDiff < daysSinceLastOrder) {
+                        daysSinceLastOrder = daysDiff;
+                      }
+                      
+                      // Check if it's a return
+                      const isReturn = sale.is_return || 
+                                     sale.return_status || 
+                                     (sale.order_status && sale.order_status.toLowerCase().includes('return')) ||
+                                     quantity < 0;
+                      
+                      if (isReturn) {
+                        totalReturn += Math.abs(quantity);
+                        if (saleDate >= thirtyDaysAgo) {
+                          last30DaysReturn += Math.abs(quantity);
+                        }
+                      } else {
+                        totalSold += quantity;
+                        if (saleDate >= thirtyDaysAgo) {
+                          last30DaysSold += quantity;
+                        }
                       }
                     }
                   }
-                }
-              });
+                });
+                break; // Found data, move to next collection
+              }
             }
           } catch (error) {
             console.warn(`Could not query collection ${collectionName}:`, error);
           }
         }
-        
-        // If no sales data found in collections, fall back to sales_units array
+          // If no sales data found in collections, fall back to sales_units array
         if (!foundSalesData) {
           totalSold = salesUnits.reduce((sum: number, unit: any) => sum + (unit.sales_units || 0), 0) || 0;
-          console.log(`No sales records found for SKU ${sku}, using sales_units: ${totalSold}`);
+          console.log(`No sales records found for ${tsinId ? `TSIN ${tsinId}` : `SKU ${sku}`}, using sales_units: ${totalSold}`);
         }
       } catch (error) {
-        console.warn(`Error calculating detailed metrics for SKU ${sku}:`, error);
+        console.warn(`Error calculating detailed metrics for ${tsinId ? `TSIN ${tsinId}` : `SKU ${sku}`}:`, error);
         // Fall back to sales_units array
         totalSold = salesUnits.reduce((sum: number, unit: any) => sum + (unit.sales_units || 0), 0) || 0;
       }// Calculate return rate: (total Return * 100 / Total sold Item)
@@ -209,9 +277,7 @@ export async function getOptimizedProductData(integrationId: string) {
         if (stockTotal === 0) return 'Disable';
         if (stockTotal < 5) return 'Not Buyable';
         return 'Buyable';
-      };
-
-      return {
+      };      return {
         image_url: data.image_url,
         title: data.title || 'Unnamed Product',
         tsin_id: tsinId,
@@ -227,7 +293,9 @@ export async function getOptimizedProductData(integrationId: string) {
         stock: stockTotal,
         availableQtyAtTakealot: availableQtyAtTakealot,
         totalProductSoldAmount: totalProductSoldAmount,
-        productStatus: getProductStatus()
+        productStatus: getProductStatus(),
+        calculationMethod: tsinId ? 'TSIN-based' : 'SKU-fallback', // Track calculation method
+        usedTsinData: foundSalesData && tsinId ? true : false // Track if TSIN data was actually used
       };
     });    const productData = await Promise.all(productDataPromises);
 

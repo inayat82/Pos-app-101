@@ -45,10 +45,11 @@ const StockAdjustmentPage = () => {
   }, [setPageTitle]);
   const [adjustments, setAdjustments] = useState<StockAdjustment[]>([]);
   const [selectedAdjustment, setSelectedAdjustment] = useState<StockAdjustment | null>(null);
-  const [showDetailsModal, setShowDetailsModal] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
+  const [showDetailsModal, setShowDetailsModal] = useState(false);  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [recordsPerPage, setRecordsPerPage] = useState(10);
+  const [currentPage, setCurrentPage] = useState(1);
   // Load stock adjustments from Firestore
   useEffect(() => {
     const fetchAdjustments = async () => {
@@ -124,9 +125,13 @@ const StockAdjustmentPage = () => {
     };
 
     fetchAdjustments();
-  }, [currentUser?.uid]);
-  const handleAddNewAdjustment = () => {
+  }, [currentUser?.uid]);  const handleAddNewAdjustment = () => {
     router.push('/admin/pos/stock-adjustment/add');
+  };
+
+  // Handle edit adjustment
+  const handleEditAdjustment = (adjustment: StockAdjustment) => {
+    router.push(`/admin/pos/stock-adjustment/add?edit=${adjustment.id}`);
   };
 
   // Handle view adjustment details
@@ -134,7 +139,6 @@ const StockAdjustmentPage = () => {
     setSelectedAdjustment(adjustment);
     setShowDetailsModal(true);
   };
-
   // Filter adjustments based on search term
   const filteredAdjustments = adjustments.filter(adjustment => 
     adjustment.adjustmentId.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -144,6 +148,18 @@ const StockAdjustmentPage = () => {
       product.sku.toLowerCase().includes(searchTerm.toLowerCase())
     )
   );
+
+  // Pagination calculations
+  const totalRecords = filteredAdjustments.length;
+  const totalPages = Math.ceil(totalRecords / recordsPerPage);
+  const startIndex = (currentPage - 1) * recordsPerPage;
+  const endIndex = startIndex + recordsPerPage;
+  const currentRecords = filteredAdjustments.slice(startIndex, endIndex);
+
+  // Update current page when records per page changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [recordsPerPage, searchTerm]);
 
   return (
     <div className="w-full max-w-full">
@@ -171,21 +187,35 @@ const StockAdjustmentPage = () => {
             </div>
           </div>
         </div>
-      )}
-
-      {/* Search bar */}
+      )}      {/* Search bar and Records per page selector */}
       <div className="mb-4 bg-white p-3 rounded-lg shadow-sm">
-        <div className="flex items-center">
-          <FiSearch className="text-gray-500 mr-3 h-4 w-4" />
-          <input
-            type="text"
-            placeholder="Search adjustments by ID, product, or reason..."
-            className="flex-grow p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
+        <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
+          <div className="flex items-center flex-grow">
+            <FiSearch className="text-gray-500 mr-3 h-4 w-4" />
+            <input
+              type="text"
+              placeholder="Search adjustments by ID, product, or reason..."
+              className="flex-grow p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-sm text-gray-600 whitespace-nowrap">Show:</label>
+            <select
+              value={recordsPerPage}
+              onChange={(e) => setRecordsPerPage(Number(e.target.value))}
+              className="p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+            >
+              <option value={10}>10</option>
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+            </select>
+            <span className="text-sm text-gray-600 whitespace-nowrap">records</span>
+          </div>
         </div>
-      </div>      {/* Adjustments table */}
+      </div>{/* Adjustments table */}
       <div className="bg-white shadow-lg rounded-lg overflow-hidden">
         <table className="min-w-full leading-normal">
           <thead>
@@ -199,22 +229,21 @@ const StockAdjustmentPage = () => {
               <th className="py-3 px-4 text-center">Actions</th>
             </tr>
           </thead>
-          <tbody className="text-gray-700 text-xs">
-            {isLoading ? (
+          <tbody className="text-gray-700 text-xs">            {isLoading ? (
               <tr>
                 <td colSpan={7} className="text-center py-8 text-gray-500">
                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
                   Loading adjustment data...
                 </td>
               </tr>
-            ) : filteredAdjustments.length === 0 ? (
+            ) : currentRecords.length === 0 ? (
               <tr>
                 <td colSpan={7} className="text-center py-8 text-gray-500">
                   {searchTerm ? 'No adjustments found matching your search.' : 'No adjustment records available yet. Click "Add New Adjustment" to record one.'}
                 </td>
               </tr>
             ) : (
-              filteredAdjustments.map((adjustment) => (
+              currentRecords.map((adjustment) => (
                 <tr key={adjustment.id} className="border-b border-gray-200 hover:bg-gray-50">
                   <td className="py-3 px-4 text-left whitespace-nowrap">
                     <span className="font-semibold text-blue-600">{adjustment.adjustmentId}</span>
@@ -231,14 +260,20 @@ const StockAdjustmentPage = () => {
                     <span className="px-2 py-1 font-semibold leading-tight text-xs rounded-full bg-green-100 text-green-800">
                       {adjustment.status}
                     </span>
-                  </td>
-                  <td className="py-3 px-4 text-center whitespace-nowrap">
+                  </td>                  <td className="py-3 px-4 text-center whitespace-nowrap">
                     <button 
                       onClick={() => handleViewAdjustment(adjustment)}
                       className="text-blue-600 hover:text-blue-800 mr-2 p-1" 
                       title="View Details"
                     >
                       <FiEye size={16} />
+                    </button>
+                    <button 
+                      onClick={() => handleEditAdjustment(adjustment)}
+                      className="text-green-600 hover:text-green-800 mr-2 p-1" 
+                      title="Edit Adjustment"
+                    >
+                      <FiEdit size={16} />
                     </button>
                     <button className="text-red-600 hover:text-red-800 p-1" title="Delete Adjustment">
                       <FiTrash2 size={16} />
@@ -249,7 +284,82 @@ const StockAdjustmentPage = () => {
             )}
           </tbody>
         </table>
-      </div>      <p className="text-xs text-gray-600 mt-3">Stock adjustment records are fetched from Firestore. Product stock is updated upon adjustment.</p>
+      </div>
+
+      {/* Pagination and status */}
+      {!isLoading && currentRecords.length > 0 && (
+        <div className="bg-white px-4 py-3 flex items-center justify-between border-t border-gray-200 sm:px-6 rounded-b-lg shadow-sm">
+          <div className="flex-1 flex justify-between sm:hidden">
+            <button
+              onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+              disabled={currentPage === 1}
+              className="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Previous
+            </button>
+            <button
+              onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+              disabled={currentPage === totalPages}
+              className="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Next
+            </button>
+          </div>
+          <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm text-gray-700">
+                Showing <span className="font-medium">{startIndex + 1}</span> to{' '}
+                <span className="font-medium">{Math.min(endIndex, totalRecords)}</span> of{' '}
+                <span className="font-medium">{totalRecords}</span> results
+              </p>
+            </div>
+            <div>
+              <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
+                <button
+                  onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                  disabled={currentPage === 1}
+                  className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Previous
+                </button>
+                {Array.from({ length: totalPages }, (_, i) => i + 1)
+                  .filter(page => {
+                    return page === 1 || page === totalPages || 
+                           (page >= currentPage - 2 && page <= currentPage + 2);
+                  })
+                  .map((page, index, array) => (
+                    <React.Fragment key={page}>
+                      {index > 0 && array[index - 1] !== page - 1 && (
+                        <span className="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-700">
+                          ...
+                        </span>
+                      )}
+                      <button
+                        onClick={() => setCurrentPage(page)}
+                        className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium ${
+                          currentPage === page
+                            ? 'z-10 bg-blue-50 border-blue-500 text-blue-600'
+                            : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
+                        }`}
+                      >
+                        {page}
+                      </button>
+                    </React.Fragment>
+                  ))}
+                <button
+                  onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+                  disabled={currentPage === totalPages}
+                  className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Next
+                </button>
+              </nav>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <p className="text-xs text-gray-600 mt-3">Stock adjustment records are fetched from Firestore. Product stock is updated upon adjustment.</p>
       
       {/* Adjustment Details Modal */}
       {showDetailsModal && selectedAdjustment && (

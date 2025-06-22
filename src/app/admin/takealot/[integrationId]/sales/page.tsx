@@ -35,10 +35,20 @@ interface Product {
   [key: string]: any;
 }
 
-export default function TakealotSalesPage({ params }: { params: { integrationId: string } }) {
+export default function TakealotSalesPage({ params }: { params: Promise<{ integrationId: string }> }) {
   const { currentUser } = useAuth();
   const { setPageTitle } = usePageTitle();
-  const { integrationId } = params;  const [sales, setSales] = useState<Sale[]>([]);
+  const [integrationId, setIntegrationId] = useState<string>('');
+
+  useEffect(() => {
+    const resolveParams = async () => {
+      const resolvedParams = await params;
+      setIntegrationId(resolvedParams.integrationId);
+    };
+    resolveParams();
+  }, [params]);
+  
+  const [sales, setSales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
@@ -114,7 +124,7 @@ export default function TakealotSalesPage({ params }: { params: { integrationId:
       setLoading(true);
       console.log('Loading sales for integration:', integrationId);
 
-      // Try takealot_sales first
+      // Use takealot_sales (correct collection with real Takealot API data)
       const salesQuery = query(
         collection(db, 'takealot_sales'),
         where('integrationId', '==', integrationId)
@@ -153,7 +163,7 @@ export default function TakealotSalesPage({ params }: { params: { integrationId:
         
         setSales(uniqueSales);
       } else {
-        // Try takealotSales as fallback
+        // Fallback to takealotSales (DEPRECATED: mock/test data - will be removed)
         const fallbackQuery = query(
           collection(db, 'takealotSales'),
           where('integrationId', '==', integrationId)

@@ -9,10 +9,11 @@ if (!admin.apps.length) {
     const projectId = process.env.FIREBASE_PROJECT_ID || process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID || 'app-101-45e45';
     
     console.log(`Initializing Firebase Admin with project ID: ${projectId}`);
-    
-    // Try to initialize with service account credentials if available
+      // Try to initialize with service account credentials if available
     const privateKey = process.env.FIREBASE_PRIVATE_KEY;
-    const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;    let initConfig: any = {
+    const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+    
+    let initConfig: any = {
       projectId: projectId,
       storageBucket: `${projectId}.firebasestorage.app`,
     };

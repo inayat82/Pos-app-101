@@ -40,10 +40,10 @@ interface ProductPerformanceData {
   stock: number;
 }
 
-export default function TakealotReportsPage({ params }: { params: { integrationId: string } }) {
+export default function TakealotReportsPage({ params }: { params: Promise<{ integrationId: string }> }) {
   const { currentUser } = useAuth();
   const { setPageTitle } = usePageTitle();
-  const { integrationId } = params;
+  const [integrationId, setIntegrationId] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [reportData, setReportData] = useState<ReportData | null>(null);
   const [selectedDateRange, setSelectedDateRange] = useState('30days');  const [selectedReportType, setSelectedReportType] = useState('overview');
@@ -51,6 +51,14 @@ export default function TakealotReportsPage({ params }: { params: { integrationI
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [showReport, setShowReport] = useState(false);
   const [cardLoading, setCardLoading] = useState<string | null>(null);
+  
+  useEffect(() => {
+    const resolveParams = async () => {
+      const resolvedParams = await params;
+      setIntegrationId(resolvedParams.integrationId);
+    };
+    resolveParams();
+  }, [params]);
   useEffect(() => {
     setPageTitle('Takealot Reports');
     return () => setPageTitle('');
@@ -66,7 +74,7 @@ export default function TakealotReportsPage({ params }: { params: { integrationI
   // Function to calculate days since last order
   const calculateDaysSinceLastOrder = async (sku: string, tsinId?: string): Promise<number> => {
     try {
-      const salesCollections = ['takealotSales', 'takealot_sales', 'sales'];
+      const salesCollections = ['takealot_sales']; // Use only the correct Takealot API data collection
       let latestOrderDate: Date | null = null;
 
       for (const collectionName of salesCollections) {

@@ -243,8 +243,7 @@ export async function retrieveTakealotDataWithDuplicateManagement(
   let duplicatesUpdated = 0;
   let newRecordsAdded = 0;
   let totalErrors = 0;
-
-  const collectionName = dataType === 'products' ? 'takealotProducts' : 'takealotSales';
+  const collectionName = dataType === 'products' ? 'takealotProducts' : 'takealot_sales'; // Use correct sales collection
   const baseEndpoint = dataType === 'products' ? '/v2/offers' : '/V2/sales';
   
   try {
@@ -467,7 +466,7 @@ export async function cleanupDuplicateRecords(
 ): Promise<{ success: boolean; message: string; duplicatesRemoved: number }> {
   console.log(`[TakealotDataManager] Starting duplicate cleanup for ${dataType} - Admin: ${adminId}`);
   
-  const collectionName = dataType === 'products' ? 'takealotProducts' : 'takealotSales';
+  const collectionName = dataType === 'products' ? 'takealotProducts' : 'takealot_sales'; // Use correct sales collection
   let duplicatesRemoved = 0;
   
   try {
