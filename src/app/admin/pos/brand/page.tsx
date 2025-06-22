@@ -1,0 +1,322 @@
+// filepath: c:\\Users\\USER-PC\\My Drive\\Sync App\\Ai\\Project\\app-101\\pos-app\\src\\app\\admin\\pos\\brand\\page.tsx
+'use client';
+
+import React, { useState, useEffect, useCallback } from 'react'; // Added useCallback
+import { FiPlus, FiSearch, FiEdit, FiTrash2 } from 'react-icons/fi';
+import AddNewBrandModal, { BrandFormData as AddBrandFormData } from '@/components/admin/AddNewBrandModal'; // Renamed import
+import EditBrandModal, { BrandFormData as EditBrandFormData } from '@/components/admin/EditBrandModal'; // Import EditBrandModal
+import { useAuth } from '@/context/AuthContext';
+import { db } from '@/lib/firebase/firebase';
+import {
+  collection,
+  addDoc,
+  serverTimestamp,
+  query,
+  onSnapshot,
+  doc, // Added doc
+  updateDoc, // Added updateDoc
+  deleteDoc, // Added deleteDoc
+  orderBy // Added orderBy
+} from 'firebase/firestore';
+import { Brand as BrandType } from '@/types/pos'; // Import Brand from centralized types
+
+// Define a type for your brand data, extending the core BrandType
+interface PageBrand extends BrandType {
+  description?: string;
+  createdAt?: any; // Firestore timestamp
+}
+
+const ProductBrandPage = () => {
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [selectedBrand, setSelectedBrand] = useState<PageBrand | null>(null);
+  const [brands, setBrands] = useState<PageBrand[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
+
+  const { currentUser } = useAuth();
+
+  const handleOpenAddModal = () => {
+    setIsAddModalOpen(true);
+  };
+
+  const handleCloseAddModal = () => {
+    setIsAddModalOpen(false);
+  };
+
+  const handleOpenEditModal = (brand: PageBrand) => {
+    setSelectedBrand(brand);
+    setIsEditModalOpen(true);
+  };
+
+  const handleCloseEditModal = () => {
+    setSelectedBrand(null);
+    setIsEditModalOpen(false);
+  };
+
+  const fetchBrands = useCallback(() => {
+    if (currentUser?.uid) {
+      setIsLoading(true);
+      setError(null);
+      const brandsColRef = collection(db, 'admins', currentUser.uid, 'brands');
+      const q = query(brandsColRef, orderBy('name', 'asc')); // Order by name
+
+      const unsubscribe = onSnapshot(q, (querySnapshot) => {
+        const fetchedBrands: PageBrand[] = [];
+        querySnapshot.forEach((doc) => {
+          // Ensure adminId is part of the object if needed, though it's implicit in the collection path
+          fetchedBrands.push({ id: doc.id, ...doc.data(), adminId: currentUser.uid } as PageBrand);
+        });
+        setBrands(fetchedBrands);
+        setIsLoading(false);
+      }, (err) => {
+        console.error("Error fetching brands: ", err);
+        setError("Failed to load brands. Please try again.");
+        setIsLoading(false);
+      });
+
+      return unsubscribe;
+    } else {
+      setBrands([]);
+      setIsLoading(false);
+      return () => {}; // Return an empty function if no user
+    }
+  }, [currentUser]);
+
+  useEffect(() => {
+    const unsubscribe = fetchBrands();
+    return () => unsubscribe();
+  }, [fetchBrands]);
+  const handleSaveBrand = async (brandData: AddBrandFormData) => {
+    if (!currentUser?.uid) {
+      setError("You must be logged in to add a brand.");
+      return;
+    }
+    setError(null);
+    try {
+      let imageUrl = '';
+      let imagePath = '';      // Upload image if provided
+      if (brandData.imageFile) {
+        const formData = new FormData();
+        formData.append('file', brandData.imageFile);
+        formData.append('adminId', currentUser.uid);
+        formData.append('uploadType', 'brands');
+
+        const uploadResponse = await fetch('/api/admin/upload-image', {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!uploadResponse.ok) {
+          const errorData = await uploadResponse.json();
+          throw new Error(errorData.error || 'Failed to upload image');
+        }
+
+        const uploadResult = await uploadResponse.json();
+        imageUrl = uploadResult.imageUrl;
+        imagePath = uploadResult.storagePath;
+      }
+
+      const brandsColRef = collection(db, 'admins', currentUser.uid, 'brands');
+      await addDoc(brandsColRef, {
+        name: brandData.name,
+        description: brandData.description,
+        imageUrl: imageUrl || undefined,
+        imagePath: imagePath || undefined,
+        createdAt: serverTimestamp(),
+      });
+      handleCloseAddModal();
+    } catch (err: any) {
+      console.error("Error adding brand to Firestore: ", err);
+      setError(err.message || "Failed to save brand. Please try again.");
+    }
+  };  const handleUpdateBrand = async (brandId: string, brandData: EditBrandFormData) => {
+    if (!currentUser?.uid) {
+      setError("You must be logged in to update a brand.");
+      return;
+    }
+    setError(null);
+    try {
+      let imageUrl = brandData.imageUrl;
+      let imagePath = brandData.imagePath;
+
+      // Upload image if provided
+      if (brandData.imageFile) {
+        const formData = new FormData();
+        formData.append('file', brandData.imageFile);
+        formData.append('adminId', currentUser.uid);
+        formData.append('uploadType', 'brands');
+
+        const uploadResponse = await fetch('/api/admin/upload-image', {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!uploadResponse.ok) {
+          const errorData = await uploadResponse.json();
+          throw new Error(errorData.error || 'Failed to upload image');
+        }
+
+        const uploadResult = await uploadResponse.json();
+        imageUrl = uploadResult.imageUrl;
+        imagePath = uploadResult.storagePath;
+      }
+
+      const brandDocRef = doc(db, 'admins', currentUser.uid, 'brands', brandId);
+      await updateDoc(brandDocRef, {
+        name: brandData.name,
+        description: brandData.description,
+        imageUrl: imageUrl,
+        imagePath: imagePath,
+        updatedAt: serverTimestamp()
+      });
+      handleCloseEditModal();
+    } catch (err) {
+      console.error("Error updating brand in Firestore: ", err);
+      setError("Failed to update brand. Please try again.");
+    }
+  };
+
+  const handleDeleteBrand = async (brandId: string) => {
+    if (!currentUser?.uid) {
+      setError("You must be logged in to delete a brand.");
+      return;
+    }
+    if (!window.confirm("Are you sure you want to delete this brand? This action cannot be undone.")) {
+        return;
+    }
+    setError(null);
+    try {
+      const brandDocRef = doc(db, 'admins', currentUser.uid, 'brands', brandId);
+      await deleteDoc(brandDocRef);
+      // Optionally, show a success message or refetch data if not using onSnapshot
+    } catch (err) {
+      console.error("Error deleting brand from Firestore: ", err);
+      setError("Failed to delete brand. Please try again.");
+    }
+  };
+
+  const filteredBrands = brands.filter(brand => 
+    brand.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (brand.description && brand.description.toLowerCase().includes(searchTerm.toLowerCase()))
+  );
+
+  return (
+    <div className="p-6 bg-gray-100 min-h-screen">
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-3xl font-bold text-gray-800">Product Brands</h1>
+        <button 
+          onClick={handleOpenAddModal} 
+          disabled={!currentUser}
+          className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg shadow-md flex items-center disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <FiPlus className="mr-2" /> Add New Brand
+        </button>
+      </div>
+
+      {error && (
+        <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 mb-6 rounded-md shadow" role="alert">
+          <p>{error}</p>
+        </div>
+      )}
+
+      <div className="mb-6 bg-white p-4 rounded-lg shadow">
+        <div className="flex items-center">
+          <FiSearch className="text-gray-500 mr-3 h-5 w-5" />
+          <input
+            type="text"
+            placeholder="Search brands by name or description..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="flex-grow p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+      </div>
+
+      <div className="bg-white shadow-lg rounded-lg overflow-hidden">        <table className="min-w-full leading-normal">
+          <thead>
+            <tr className="bg-gray-200 text-gray-600 uppercase text-sm leading-normal">
+              <th className="py-3 px-6 text-left">Image</th>
+              <th className="py-3 px-6 text-left">Brand Name</th>
+              <th className="py-3 px-6 text-left">Description</th>
+              <th className="py-3 px-6 text-center">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="text-gray-700 text-sm">
+            {isLoading && (
+              <tr>
+                <td colSpan={4} className="text-center py-10 text-gray-500">Loading brands...</td>
+              </tr>
+            )}
+            {!isLoading && !error && filteredBrands.length === 0 && (
+              <tr>
+                <td colSpan={4} className="text-center py-10 text-gray-500">
+                  {searchTerm ? 'No brands match your search.' : 'No brands found. Click "Add New Brand" to get started.'}
+                </td>
+              </tr>
+            )}
+            {!isLoading && !error && filteredBrands.map((brand) => (
+              <tr key={brand.id} className="border-b border-gray-200 hover:bg-gray-100">
+                <td className="py-4 px-6 text-left">
+                  <div className="w-12 h-12 flex items-center justify-center rounded-lg overflow-hidden bg-gray-100">
+                    {brand.imageUrl ? (
+                      <img 
+                        src={brand.imageUrl} 
+                        alt={brand.name}
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          e.currentTarget.style.display = 'none';
+                          (e.currentTarget.nextElementSibling as HTMLElement)!.style.display = 'flex';
+                        }}
+                      />
+                    ) : null}
+                    <div 
+                      className={`w-full h-full flex items-center justify-center text-gray-400 text-xs ${brand.imageUrl ? 'hidden' : 'flex'}`}
+                    >
+                      No Image
+                    </div>
+                  </div>
+                </td>
+                <td className="py-4 px-6 text-left whitespace-nowrap">{brand.name}</td>
+                <td className="py-4 px-6 text-left">{brand.description || 'N/A'}</td>
+                <td className="py-4 px-6 text-center">
+                  <button 
+                    onClick={() => handleOpenEditModal(brand)}
+                    className="text-blue-600 hover:text-blue-800 mr-2 p-1"
+                    title="Edit Brand"
+                  >
+                    <FiEdit size={18} />
+                  </button>
+                  <button 
+                    onClick={() => handleDeleteBrand(brand.id)}
+                    className="text-red-600 hover:text-red-800 p-1"
+                    title="Delete Brand"
+                  >
+                    <FiTrash2 size={18} />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <AddNewBrandModal 
+        isOpen={isAddModalOpen}
+        onClose={handleCloseAddModal}
+        onSave={handleSaveBrand} 
+      />
+      {selectedBrand && (
+        <EditBrandModal
+          isOpen={isEditModalOpen}
+          onClose={handleCloseEditModal}
+          onSave={handleUpdateBrand}
+          brand={selectedBrand}
+        />
+      )}
+    </div>
+  );
+};
+
+export default ProductBrandPage;

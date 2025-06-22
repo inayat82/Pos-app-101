@@ -1,0 +1,69 @@
+{
+  // See https://go.microsoft.com/fwlink/?LinkId=733558
+  // for the documentation about the tasks.json format
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Run Next.js Dev Server",
+      "type": "shell",
+      "command": "npm run dev",
+      "isBackground": true,
+      "problemMatcher": [
+        {
+          "pattern": [
+            {
+              "regexp": ".*Compiling /.*",
+              "file": 1,
+              "location": 2,
+              "message": 3
+            }
+          ],
+          "background": {
+            "activeOnStart": true,
+            "beginsPattern": ".*ready started server on.*",
+            "endsPattern": ".*Compiled .*(in .*)?"
+          }
+        }
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}" // Corrected: Ensures task runs in the root of pos-app directory
+      },
+      "detail": "Starts the Next.js development server for the pos-app."
+    },
+    {
+      "label": "Build Next.js Project",
+      "type": "shell",
+      "command": "npm run build",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": [
+        "$nextjs-tsc"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}" // Corrected: Ensures task runs in the root of pos-app directory
+      },
+      "detail": "Builds the Next.js application for production."
+    },
+    {
+      "label": "Start Next.js Production Server",
+      "type": "shell",
+      "command": "npm run start",
+      "isBackground": true,
+      "options": {
+        "cwd": "${workspaceFolder}" // Corrected: Ensures task runs in the root of pos-app directory
+      },
+      "detail": "Starts the Next.js production server (requires a build first)."
+    },
+    {
+      "label": "Lint Project",
+      "type": "shell",
+      "command": "npm run lint",
+      "options": {
+        "cwd": "${workspaceFolder}" // Corrected: Ensures task runs in the root of pos-app directory
+      },
+      "detail": "Runs ESLint to check for code quality and style issues."
+    }
+  ]
+}

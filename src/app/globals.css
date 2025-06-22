@@ -1,0 +1,16 @@
+@import "tailwindcss";
+
+/* Custom utilities for enhanced job logs display */
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.break-all-safe {
+  word-break: break-all;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}

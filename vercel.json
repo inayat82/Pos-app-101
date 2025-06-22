@@ -1,0 +1,32 @@
+{
+  "version": 2,
+  "framework": "nextjs",
+  "buildCommand": "npm run build",
+  "installCommand": "npm install",
+  "devCommand": "npm run dev",
+  "functions": {
+    "pages/api/**/*.js": {
+      "maxDuration": 30
+    },
+    "pages/api/**/*.ts": {
+      "maxDuration": 30
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/cron/takealot-robust-hourly",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/takealot-robust-daily",
+      "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/cron/takealot-robust-weekly",
+      "schedule": "0 3 * * 0"
+    }
+  ],
+  "env": {
+    "NODE_ENV": "production"
+  }
+}

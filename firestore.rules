@@ -1,0 +1,207 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper function to get user data
+    function getUserData(userId) {
+      let userDoc = /databases/$(database)/documents/users/$(userId);
+      return exists(userDoc) ? get(userDoc).data : null;
+    }
+
+    // Helper function to get user role
+    function getUserRole(userId) {
+      let userData = getUserData(userId);
+      return userData != null ? userData.role : null;
+    }
+
+    // Helper function to get a sub-user's adminId
+    function getSubUserAdminId(userId) {
+      let userData = getUserData(userId);
+      return userData != null && userData.adminId != null ? userData.adminId : null;
+    }
+
+    // Helper function to check if user is an admin
+    function isAdmin(userId) {
+      return getUserRole(userId) == 'admin';
+    }
+
+    // Helper function to check if user is a superadmin
+    function isSuperAdmin(userId) {
+      return getUserRole(userId) == 'superadmin';
+    }
+
+    // Helper function to check if user is a POSUser
+    function isPOSUser(userId) {
+      return getUserRole(userId) == 'posuser';
+    }
+
+    // Helper function to check if user is a TakealotUser
+    function isTakealotUser(userId) {
+      return getUserRole(userId) == 'takealotuser';
+    }
+
+    // Simplified admin access check
+    function canAccessAdminData(adminUID) {
+      return request.auth != null && 
+             (
+               (request.auth.uid == adminUID && isAdmin(request.auth.uid)) ||
+               isSuperAdmin(request.auth.uid)
+             );
+    }
+
+    // Check if sub-user can access their admin's data
+    function canSubUserAccessData(adminUID) {
+      let userAdminId = getSubUserAdminId(request.auth.uid);
+      return request.auth != null && userAdminId == adminUID;
+    }
+
+    // USERS COLLECTION
+    match /users/{userId} {
+      allow get: if request.auth.uid == userId ||
+                    (isAdmin(request.auth.uid) && getSubUserAdminId(userId) == request.auth.uid) || 
+                    isSuperAdmin(request.auth.uid);
+
+      allow list: if isAdmin(request.auth.uid) || isSuperAdmin(request.auth.uid);
+
+      allow create: if request.auth.uid != null &&
+                       (
+                         (isAdmin(request.auth.uid) &&
+                          request.resource.data.adminId == request.auth.uid &&
+                          request.resource.data.role != 'superadmin' &&
+                          request.resource.data.role != 'admin') ||
+                         isSuperAdmin(request.auth.uid) ||
+                         (request.auth.uid == userId && request.resource.data.role == 'admin')
+                       );
+
+      allow update: if request.auth.uid != null &&
+                       (
+                         request.auth.uid == userId ||
+                         (isAdmin(request.auth.uid) && resource.data.adminId == request.auth.uid) ||
+                         isSuperAdmin(request.auth.uid)
+                       );
+
+      allow delete: if (isAdmin(request.auth.uid) && resource.data.adminId == request.auth.uid) ||
+                       isSuperAdmin(request.auth.uid);
+    }
+
+    // ADMINS COLLECTION - Allow creation of admin document
+    match /admins/{adminUID} {
+      allow read, write, create, delete: if canAccessAdminData(adminUID);
+
+      // POS Master Data
+      match /{collection}/{documentId} {
+        allow read, write, create, delete: if canAccessAdminData(adminUID);
+        allow read: if canSubUserAccessData(adminUID);
+      }    }    // TAKEALOT INTEGRATIONS COLLECTION
+    match /takealotIntegrations/{integrationId} {
+      allow read, write, create, delete: if request.auth != null && 
+                                          (
+                                            (isAdmin(request.auth.uid) && resource.data.adminId == request.auth.uid) ||
+                                            (isAdmin(request.auth.uid) && request.resource.data.adminId == request.auth.uid) ||
+                                            isSuperAdmin(request.auth.uid)
+                                          );
+      
+      // Allow read access to assigned users
+      allow read: if request.auth != null && 
+                     (
+                       resource.data.assignedUserId == request.auth.uid ||
+                       (isTakealotUser(request.auth.uid) && getSubUserAdminId(request.auth.uid) == resource.data.adminId)
+                     );
+    }
+
+    // TAKEALOT JOB LOGS COLLECTION
+    match /takealotJobLogs/{jobId} {
+      allow read, write, create, delete: if request.auth != null && 
+                                          (
+                                            isAdmin(request.auth.uid) ||
+                                            isSuperAdmin(request.auth.uid)
+                                          );
+    }    // TAKEALOT OFFERS COLLECTION
+    match /takealot_offers/{offerId} {
+      allow read, write, create, delete: if request.auth != null && 
+                                          (
+                                            isAdmin(request.auth.uid) ||
+                                            isSuperAdmin(request.auth.uid)
+                                          );
+      
+      // Allow read access to assigned users
+      allow read: if request.auth != null && 
+                     (
+                       isTakealotUser(request.auth.uid) ||
+                       isPOSUser(request.auth.uid)
+                     );
+    }
+
+    // TAKEALOT SALES COLLECTION
+    match /takealot_sales/{saleId} {
+      allow read, write, create, delete: if request.auth != null && 
+                                          (
+                                            isAdmin(request.auth.uid) ||
+                                            isSuperAdmin(request.auth.uid)
+                                          );
+      
+      // Allow read access to assigned users
+      allow read: if request.auth != null && 
+                     (
+                       isTakealotUser(request.auth.uid) ||
+                       isPOSUser(request.auth.uid)
+                     );
+    }
+
+    // TAKEALOT PRODUCTS COLLECTION (legacy)
+    match /takealotProducts/{productId} {
+      allow read, write, create, delete: if request.auth != null && 
+                                          (
+                                            isAdmin(request.auth.uid) ||
+                                            isSuperAdmin(request.auth.uid)
+                                          );
+      
+      // Allow read access to assigned users
+      allow read: if request.auth != null && 
+                     (
+                       isTakealotUser(request.auth.uid) ||
+                       isPOSUser(request.auth.uid)
+                     );
+    }
+
+    // TAKEALOT SALES COLLECTION (legacy)
+    match /takealotSales/{saleId} {allow read, write, create, delete: if request.auth != null && 
+                                          (
+                                            isAdmin(request.auth.uid) ||
+                                            isSuperAdmin(request.auth.uid)
+                                          );
+        // Allow read access to assigned users
+      allow read: if request.auth != null && 
+                     (
+                       isTakealotUser(request.auth.uid) ||
+                       isPOSUser(request.auth.uid)
+                     );
+    }
+
+    // TAKEALOT CRON JOBS COLLECTION
+    match /takealotCronJobs/{jobId} {
+      allow read, write, create, delete: if request.auth != null && 
+                                          (
+                                            isAdmin(request.auth.uid) ||
+                                            isSuperAdmin(request.auth.uid)
+                                          );
+    }
+
+    // Takealot Cron Job Settings
+    match /takealotCronSettings/{integrationId} {
+      // Allow admin access
+      allow read, write, create, delete: if request.auth != null && 
+                                          (
+                                            isAdmin(request.auth.uid) ||
+                                            isSuperAdmin(request.auth.uid)
+                                          );
+    }
+
+    // FALLBACK RULES - More permissive for debugging
+    match /{document=**} {
+      allow read, write: if request.auth != null && (isAdmin(request.auth.uid) || isSuperAdmin(request.auth.uid));
+    }
+
+  }
+}
