@@ -2137,21 +2137,59 @@ const TakealotSettingsPage = ({ params }: { params: { integrationId: string } })
                     <div className={`dot absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform shadow-sm ${productStrategies.find(s => s.id === 'prd_200_man')?.cronEnabled ? 'translate-x-full' : ''}`}></div>
                   </div>
                 </label>
-              </div>                <div className="bg-white/70 rounded-lg p-3 mb-4 border border-gray-200 shadow-sm">
+              </div>              <div className="bg-white/70 rounded-lg p-3 mb-4 border border-gray-200 shadow-sm">
                 <div className="text-gray-700 font-medium text-xs mb-2">
-                  Last Sync: <span className={getSyncStatusDisplay('prd_200_man').lastSyncColor}>{getSyncStatusDisplay('prd_200_man').lastSyncText}</span>
+                  Last Sync: <span className={
+                    fetchOperations['products_prd_200_man']?.isRunning 
+                      ? 'text-blue-600' 
+                      : getSyncStatusDisplay('prd_200_man').lastSyncColor
+                  }>
+                    {fetchOperations['products_prd_200_man']?.isRunning 
+                      ? 'Running...' 
+                      : getSyncStatusDisplay('prd_200_man').lastSyncText}
+                  </span>
                 </div>
-                <div className="grid grid-cols-2 gap-3 text-xs">
-                  <div>
-                    <div className="text-gray-600">Fetched: <span className="font-semibold text-cyan-600">{getSyncStatusDisplay('prd_200_man').totalFetched}</span></div>
-                    <div className="text-gray-600">New: <span className="font-semibold text-green-600">{getSyncStatusDisplay('prd_200_man').newRecords}</span></div>
+
+                {!fetchOperations['products_prd_200_man']?.isRunning ? (
+                  <div className="grid grid-cols-2 gap-3 text-xs">
+                    <div>
+                      <div className="text-gray-600">Fetched: <span className="font-semibold text-cyan-600">
+                        {fetchOperations['products_prd_200_man']?.totalFetched ?? getSyncStatusDisplay('prd_200_man').totalFetched}
+                      </span></div>
+                      <div className="text-gray-600">New: <span className="font-semibold text-green-600">
+                        {fetchOperations['products_prd_200_man']?.newRecords ?? getSyncStatusDisplay('prd_200_man').newRecords}
+                      </span></div>
+                    </div>
+                    <div>
+                      <div className="text-gray-600">Updated: <span className="font-semibold text-orange-600">
+                        {fetchOperations['products_prd_200_man']?.totalUpdated ?? getSyncStatusDisplay('prd_200_man').totalUpdated}
+                      </span></div>
+                      <div className="text-gray-600">Pages: <span className="font-semibold">{getSyncStatusDisplay('prd_200_man').totalPages}</span></div>
+                    </div>
                   </div>
-                  <div>
-                    <div className="text-gray-600">Updated: <span className="font-semibold text-orange-600">{getSyncStatusDisplay('prd_200_man').totalUpdated}</span></div>
-                    <div className="text-gray-600">Pages: <span className="font-semibold">{getSyncStatusDisplay('prd_200_man').totalPages}</span></div>
+                ) : (
+                  <div className="text-xs text-blue-600 italic">
+                    Processing products... Please wait for results.
                   </div>
-                </div>
-              </div>                <button 
+                )}
+
+                {((fetchOperations['products_prd_200_man']?.newRecords ?? 0) > 0 || (fetchOperations['products_prd_200_man']?.totalUpdated ?? 0) > 0) && (
+                  <div className="mt-2 space-y-1">
+                    {(fetchOperations['products_prd_200_man']?.newRecords ?? 0) > 0 && (
+                      <div className="px-2 py-1 bg-green-50 border border-green-200 rounded text-xs text-green-700">
+                        <strong>New Products:</strong> {fetchOperations['products_prd_200_man']?.newRecords} created with TSIN
+                      </div>
+                    )}
+                    {(fetchOperations['products_prd_200_man']?.totalUpdated ?? 0) > 0 && (
+                      <div className="px-2 py-1 bg-orange-50 border border-orange-200 rounded text-xs text-orange-700">
+                        <strong>Updated:</strong> {fetchOperations['products_prd_200_man']?.totalUpdated} products (Price, RRP, SKU, Image, Quantity)
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <button 
                 onClick={() => handleFetchOperation('prd_200_man', 'Fetch & Optimize 200 Products', 'products')}
                 disabled={fetchOperations['products_prd_200_man']?.isRunning}
                 className={`w-full text-sm font-semibold py-2.5 px-4 rounded-lg transition-all duration-200 shadow-md hover:shadow-lg transform hover:-translate-y-0.5 ${
@@ -2163,12 +2201,52 @@ const TakealotSettingsPage = ({ params }: { params: { integrationId: string } })
                 {fetchOperations['products_prd_200_man']?.isRunning ? (
                   <div className="flex items-center justify-center space-x-2">
                     <div className="w-4 h-4 border-2 border-gray-600 border-t-transparent rounded-full animate-spin"></div>
-                    <span>Optimizing...</span>
+                    <span>{fetchOperations['products_prd_200_man']?.message || 'Optimizing...'}</span>
                   </div>
                 ) : (
-                  'Fetch & Optimize'
+                  <div className="flex items-center justify-center space-x-2">
+                    <FiPackage className="w-4 h-4" />
+                    <span>Fetch & Optimize</span>
+                  </div>
                 )}
               </button>
+
+              {fetchOperations['products_prd_200_man']?.isRunning && (
+                <div className="mt-3 space-y-2">
+                  <div className="flex items-center justify-between text-xs text-gray-600">
+                    <span>Progress</span>
+                    <span>{fetchOperations['products_prd_200_man']?.progress || 0}%</span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-2">
+                    <div 
+                      className="bg-cyan-600 h-2 rounded-full progress-bar transition-all duration-300"
+                      style={{ width: `${fetchOperations['products_prd_200_man']?.progress || 0}%` }}
+                    ></div>
+                  </div>
+
+                  {/* Enhanced Progress Details */}
+                  <div className="grid grid-cols-3 gap-2 text-xs slide-up">
+                    <div className="text-center p-2 bg-green-50 rounded border">
+                      <div className="font-semibold text-green-600">{fetchOperations['products_prd_200_man']?.newRecords || 0}</div>
+                      <div className="text-gray-600">New</div>
+                    </div>
+                    <div className="text-center p-2 bg-orange-50 rounded border">
+                      <div className="font-semibold text-orange-600">{fetchOperations['products_prd_200_man']?.totalUpdated || 0}</div>
+                      <div className="text-gray-600">Updated</div>
+                    </div>
+                    <div className="text-center p-2 bg-cyan-50 rounded border">
+                      <div className="font-semibold text-cyan-600">{fetchOperations['products_prd_200_man']?.totalFetched || 0}</div>
+                      <div className="text-gray-600">Fetched</div>
+                    </div>
+                  </div>
+
+                  {fetchOperations['products_prd_200_man']?.logs?.length > 0 && (
+                    <div className="text-xs text-gray-500 bg-gray-50 rounded p-2 max-h-20 overflow-y-auto">
+                      {fetchOperations['products_prd_200_man'].logs[fetchOperations['products_prd_200_man'].logs.length - 1]}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>            {/* Fetch & Optimize All Products - Every 6 hr */}
             <div className="bg-gradient-to-br from-teal-50 to-emerald-50 rounded-xl p-5 mb-4 border border-teal-200 shadow-sm">
               <div className="flex items-center justify-between mb-4">
@@ -2188,21 +2266,59 @@ const TakealotSettingsPage = ({ params }: { params: { integrationId: string } })
                     <div className={`dot absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform shadow-sm ${productStrategies.find(s => s.id === 'prd_all_6h')?.cronEnabled ? 'translate-x-full' : ''}`}></div>
                   </div>
                 </label>
-              </div>                <div className="bg-white/70 rounded-lg p-3 mb-4 border border-gray-200 shadow-sm">
+              </div>              <div className="bg-white/70 rounded-lg p-3 mb-4 border border-gray-200 shadow-sm">
                 <div className="text-gray-700 font-medium text-xs mb-2">
-                  Last Sync: <span className={getSyncStatusDisplay('prd_all_6h').lastSyncColor}>{getSyncStatusDisplay('prd_all_6h').lastSyncText}</span>
+                  Last Sync: <span className={
+                    fetchOperations['products_prd_all_6h']?.isRunning 
+                      ? 'text-blue-600' 
+                      : getSyncStatusDisplay('prd_all_6h').lastSyncColor
+                  }>
+                    {fetchOperations['products_prd_all_6h']?.isRunning 
+                      ? 'Running...' 
+                      : getSyncStatusDisplay('prd_all_6h').lastSyncText}
+                  </span>
                 </div>
-                <div className="grid grid-cols-2 gap-3 text-xs">
-                  <div>
-                    <div className="text-gray-600">Fetched: <span className="font-semibold text-teal-600">{getSyncStatusDisplay('prd_all_6h').totalFetched}</span></div>
-                    <div className="text-gray-600">New: <span className="font-semibold text-green-600">{getSyncStatusDisplay('prd_all_6h').newRecords}</span></div>
+
+                {!fetchOperations['products_prd_all_6h']?.isRunning ? (
+                  <div className="grid grid-cols-2 gap-3 text-xs">
+                    <div>
+                      <div className="text-gray-600">Fetched: <span className="font-semibold text-teal-600">
+                        {fetchOperations['products_prd_all_6h']?.totalFetched ?? getSyncStatusDisplay('prd_all_6h').totalFetched}
+                      </span></div>
+                      <div className="text-gray-600">New: <span className="font-semibold text-green-600">
+                        {fetchOperations['products_prd_all_6h']?.newRecords ?? getSyncStatusDisplay('prd_all_6h').newRecords}
+                      </span></div>
+                    </div>
+                    <div>
+                      <div className="text-gray-600">Updated: <span className="font-semibold text-orange-600">
+                        {fetchOperations['products_prd_all_6h']?.totalUpdated ?? getSyncStatusDisplay('prd_all_6h').totalUpdated}
+                      </span></div>
+                      <div className="text-gray-600">Pages: <span className="font-semibold">{getSyncStatusDisplay('prd_all_6h').totalPages}</span></div>
+                    </div>
                   </div>
-                  <div>
-                    <div className="text-gray-600">Updated: <span className="font-semibold text-orange-600">{getSyncStatusDisplay('prd_all_6h').totalUpdated}</span></div>
-                    <div className="text-gray-600">Pages: <span className="font-semibold">{getSyncStatusDisplay('prd_all_6h').totalPages}</span></div>
+                ) : (
+                  <div className="text-xs text-blue-600 italic">
+                    Processing products... Please wait for results.
                   </div>
-                </div>
-              </div>                <button 
+                )}
+
+                {((fetchOperations['products_prd_all_6h']?.newRecords ?? 0) > 0 || (fetchOperations['products_prd_all_6h']?.totalUpdated ?? 0) > 0) && (
+                  <div className="mt-2 space-y-1">
+                    {(fetchOperations['products_prd_all_6h']?.newRecords ?? 0) > 0 && (
+                      <div className="px-2 py-1 bg-green-50 border border-green-200 rounded text-xs text-green-700">
+                        <strong>New Products:</strong> {fetchOperations['products_prd_all_6h']?.newRecords} created with TSIN
+                      </div>
+                    )}
+                    {(fetchOperations['products_prd_all_6h']?.totalUpdated ?? 0) > 0 && (
+                      <div className="px-2 py-1 bg-orange-50 border border-orange-200 rounded text-xs text-orange-700">
+                        <strong>Updated:</strong> {fetchOperations['products_prd_all_6h']?.totalUpdated} products (Price, RRP, SKU, Image, Quantity)
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <button 
                 onClick={() => handleFetchOperation('prd_all_6h', 'Fetch & Optimize All Products (6 hr)', 'products')}
                 disabled={fetchOperations['products_prd_all_6h']?.isRunning}
                 className={`w-full text-sm font-semibold py-2.5 px-4 rounded-lg transition-all duration-200 shadow-md hover:shadow-lg transform hover:-translate-y-0.5 ${
@@ -2211,14 +2327,55 @@ const TakealotSettingsPage = ({ params }: { params: { integrationId: string } })
                     : 'bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white'
                 }`}
               >
-                {fetchOperations['products_prd_all_6h']?.isRunning ? (                  <div className="flex items-center justify-center space-x-2">
+                {fetchOperations['products_prd_all_6h']?.isRunning ? (
+                  <div className="flex items-center justify-center space-x-2">
                     <div className="w-4 h-4 border-2 border-gray-600 border-t-transparent rounded-full animate-spin"></div>
-                    <span>Optimizing...</span>
+                    <span>{fetchOperations['products_prd_all_6h']?.message || 'Optimizing...'}</span>
                   </div>
                 ) : (
-                  'Fetch & Optimize'
+                  <div className="flex items-center justify-center space-x-2">
+                    <FiPackage className="w-4 h-4" />
+                    <span>Fetch & Optimize</span>
+                  </div>
                 )}
               </button>
+
+              {fetchOperations['products_prd_all_6h']?.isRunning && (
+                <div className="mt-3 space-y-2">
+                  <div className="flex items-center justify-between text-xs text-gray-600">
+                    <span>Progress</span>
+                    <span>{fetchOperations['products_prd_all_6h']?.progress || 0}%</span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-2">
+                    <div 
+                      className="bg-teal-600 h-2 rounded-full progress-bar transition-all duration-300"
+                      style={{ width: `${fetchOperations['products_prd_all_6h']?.progress || 0}%` }}
+                    ></div>
+                  </div>
+
+                  {/* Enhanced Progress Details */}
+                  <div className="grid grid-cols-3 gap-2 text-xs slide-up">
+                    <div className="text-center p-2 bg-green-50 rounded border">
+                      <div className="font-semibold text-green-600">{fetchOperations['products_prd_all_6h']?.newRecords || 0}</div>
+                      <div className="text-gray-600">New</div>
+                    </div>
+                    <div className="text-center p-2 bg-orange-50 rounded border">
+                      <div className="font-semibold text-orange-600">{fetchOperations['products_prd_all_6h']?.totalUpdated || 0}</div>
+                      <div className="text-gray-600">Updated</div>
+                    </div>
+                    <div className="text-center p-2 bg-teal-50 rounded border">
+                      <div className="font-semibold text-teal-600">{fetchOperations['products_prd_all_6h']?.totalFetched || 0}</div>
+                      <div className="text-gray-600">Fetched</div>
+                    </div>
+                  </div>
+
+                  {fetchOperations['products_prd_all_6h']?.logs?.length > 0 && (
+                    <div className="text-xs text-gray-500 bg-gray-50 rounded p-2 max-h-20 overflow-y-auto">
+                      {fetchOperations['products_prd_all_6h'].logs[fetchOperations['products_prd_all_6h'].logs.length - 1]}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Fetch & Optimize All Products - Every 12 hr */}
@@ -2240,21 +2397,59 @@ const TakealotSettingsPage = ({ params }: { params: { integrationId: string } })
                     <div className={`dot absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform shadow-sm ${productStrategies.find(s => s.id === 'prd_all_12h')?.cronEnabled ? 'translate-x-full' : ''}`}></div>
                   </div>
                 </label>
-              </div>                <div className="bg-white/70 rounded-lg p-3 mb-4 border border-gray-200 shadow-sm">
+              </div>              <div className="bg-white/70 rounded-lg p-3 mb-4 border border-gray-200 shadow-sm">
                 <div className="text-gray-700 font-medium text-xs mb-2">
-                  Last Sync: <span className={getSyncStatusDisplay('prd_all_12h').lastSyncColor}>{getSyncStatusDisplay('prd_all_12h').lastSyncText}</span>
+                  Last Sync: <span className={
+                    fetchOperations['products_prd_all_12h']?.isRunning 
+                      ? 'text-blue-600' 
+                      : getSyncStatusDisplay('prd_all_12h').lastSyncColor
+                  }>
+                    {fetchOperations['products_prd_all_12h']?.isRunning 
+                      ? 'Running...' 
+                      : getSyncStatusDisplay('prd_all_12h').lastSyncText}
+                  </span>
                 </div>
-                <div className="grid grid-cols-2 gap-3 text-xs">
-                  <div>
-                    <div className="text-gray-600">Fetched: <span className="font-semibold text-amber-600">{getSyncStatusDisplay('prd_all_12h').totalFetched}</span></div>
-                    <div className="text-gray-600">New: <span className="font-semibold text-green-600">{getSyncStatusDisplay('prd_all_12h').newRecords}</span></div>
+
+                {!fetchOperations['products_prd_all_12h']?.isRunning ? (
+                  <div className="grid grid-cols-2 gap-3 text-xs">
+                    <div>
+                      <div className="text-gray-600">Fetched: <span className="font-semibold text-amber-600">
+                        {fetchOperations['products_prd_all_12h']?.totalFetched ?? getSyncStatusDisplay('prd_all_12h').totalFetched}
+                      </span></div>
+                      <div className="text-gray-600">New: <span className="font-semibold text-green-600">
+                        {fetchOperations['products_prd_all_12h']?.newRecords ?? getSyncStatusDisplay('prd_all_12h').newRecords}
+                      </span></div>
+                    </div>
+                    <div>
+                      <div className="text-gray-600">Updated: <span className="font-semibold text-orange-600">
+                        {fetchOperations['products_prd_all_12h']?.totalUpdated ?? getSyncStatusDisplay('prd_all_12h').totalUpdated}
+                      </span></div>
+                      <div className="text-gray-600">Pages: <span className="font-semibold">{getSyncStatusDisplay('prd_all_12h').totalPages}</span></div>
+                    </div>
                   </div>
-                  <div>
-                    <div className="text-gray-600">Updated: <span className="font-semibold text-orange-600">{getSyncStatusDisplay('prd_all_12h').totalUpdated}</span></div>
-                    <div className="text-gray-600">Pages: <span className="font-semibold">{getSyncStatusDisplay('prd_all_12h').totalPages}</span></div>
+                ) : (
+                  <div className="text-xs text-blue-600 italic">
+                    Processing products... Please wait for results.
                   </div>
-                </div>
-              </div>              <button 
+                )}
+
+                {((fetchOperations['products_prd_all_12h']?.newRecords ?? 0) > 0 || (fetchOperations['products_prd_all_12h']?.totalUpdated ?? 0) > 0) && (
+                  <div className="mt-2 space-y-1">
+                    {(fetchOperations['products_prd_all_12h']?.newRecords ?? 0) > 0 && (
+                      <div className="px-2 py-1 bg-green-50 border border-green-200 rounded text-xs text-green-700">
+                        <strong>New Products:</strong> {fetchOperations['products_prd_all_12h']?.newRecords} created with TSIN
+                      </div>
+                    )}
+                    {(fetchOperations['products_prd_all_12h']?.totalUpdated ?? 0) > 0 && (
+                      <div className="px-2 py-1 bg-orange-50 border border-orange-200 rounded text-xs text-orange-700">
+                        <strong>Updated:</strong> {fetchOperations['products_prd_all_12h']?.totalUpdated} products (Price, RRP, SKU, Image, Quantity)
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <button 
                   onClick={() => handleFetchOperation('prd_all_12h', 'Fetch & Optimize All Products (12 hr)', 'products')}
                   disabled={fetchOperations['products_prd_all_12h']?.isRunning}
                   className={`w-full text-sm font-semibold py-2.5 px-4 rounded-lg transition-all duration-200 shadow-md hover:shadow-lg transform hover:-translate-y-0.5 ${
@@ -2266,11 +2461,52 @@ const TakealotSettingsPage = ({ params }: { params: { integrationId: string } })
                   {fetchOperations['products_prd_all_12h']?.isRunning ? (
                     <div className="flex items-center justify-center space-x-2">
                       <div className="w-4 h-4 border-2 border-gray-600 border-t-transparent rounded-full animate-spin"></div>
-                      <span>Optimizing...</span>                    </div>
+                      <span>{fetchOperations['products_prd_all_12h']?.message || 'Optimizing...'}</span>
+                    </div>
                   ) : (
-                    'Fetch & Optimize'
+                    <div className="flex items-center justify-center space-x-2">
+                      <FiPackage className="w-4 h-4" />
+                      <span>Fetch & Optimize</span>
+                    </div>
                   )}
                 </button>
+
+              {fetchOperations['products_prd_all_12h']?.isRunning && (
+                <div className="mt-3 space-y-2">
+                  <div className="flex items-center justify-between text-xs text-gray-600">
+                    <span>Progress</span>
+                    <span>{fetchOperations['products_prd_all_12h']?.progress || 0}%</span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-2">
+                    <div 
+                      className="bg-amber-600 h-2 rounded-full progress-bar transition-all duration-300"
+                      style={{ width: `${fetchOperations['products_prd_all_12h']?.progress || 0}%` }}
+                    ></div>
+                  </div>
+
+                  {/* Enhanced Progress Details */}
+                  <div className="grid grid-cols-3 gap-2 text-xs slide-up">
+                    <div className="text-center p-2 bg-green-50 rounded border">
+                      <div className="font-semibold text-green-600">{fetchOperations['products_prd_all_12h']?.newRecords || 0}</div>
+                      <div className="text-gray-600">New</div>
+                    </div>
+                    <div className="text-center p-2 bg-orange-50 rounded border">
+                      <div className="font-semibold text-orange-600">{fetchOperations['products_prd_all_12h']?.totalUpdated || 0}</div>
+                      <div className="text-gray-600">Updated</div>
+                    </div>
+                    <div className="text-center p-2 bg-amber-50 rounded border">
+                      <div className="font-semibold text-amber-600">{fetchOperations['products_prd_all_12h']?.totalFetched || 0}</div>
+                      <div className="text-gray-600">Fetched</div>
+                    </div>
+                  </div>
+
+                  {fetchOperations['products_prd_all_12h']?.logs?.length > 0 && (
+                    <div className="text-xs text-gray-500 bg-gray-50 rounded p-2 max-h-20 overflow-y-auto">
+                      {fetchOperations['products_prd_all_12h'].logs[fetchOperations['products_prd_all_12h'].logs.length - 1]}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>
