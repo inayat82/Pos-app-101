@@ -1142,11 +1142,11 @@ const TakealotSettingsPage = ({ params }: { params: Promise<{ integrationId: str
       setSyncStatusData(statusData);
     } catch (error: any) {
       console.error("Failed to load sync status data:", error);
-    }
-  };  // Helper function to get sync status display data
+    }  };
+
+  // Helper function to get sync status display data
   const getSyncStatusDisplay = (strategyId: string) => {
     const status = syncStatusData[strategyId];
-    console.log(`Getting sync status display for strategy ${strategyId}:`, status); // Debug log
     
     if (!status || !status.lastSync) {
       return {
@@ -1181,9 +1181,7 @@ const TakealotSettingsPage = ({ params }: { params: Promise<{ integrationId: str
 
     if (status.status === 'error') {
       lastSyncColor = 'text-red-600';
-    }
-
-    const result = {
+    }    const result = {
       lastSyncText,
       lastSyncColor,
       totalFetched: status.totalFetched,
@@ -1192,7 +1190,6 @@ const TakealotSettingsPage = ({ params }: { params: Promise<{ integrationId: str
       newRecords: status.newRecords,
       totalPages: status.totalPages
     };
-      console.log(`Sync status display for ${strategyId}:`, result); // Debug log
     return result;
   };
 
@@ -1703,11 +1700,10 @@ const TakealotSettingsPage = ({ params }: { params: Promise<{ integrationId: str
                   <div className="flex items-center justify-center space-x-2">
                     <div className="w-4 h-4 border-2 border-gray-600 border-t-transparent rounded-full animate-spin"></div>
                     <span>{fetchOperations['sales_sls_100']?.message || 'Optimizing...'}</span>
-                  </div>
-                ) : (
+                  </div>                ) : (
                   <div className="flex items-center justify-center space-x-2">
                     <FiZap className="w-4 h-4" />
-                    <span>Fetch & Optimize</span>
+                    <span>Sync & Optimize</span>
                   </div>
                 )}
               </button>
@@ -1789,14 +1785,13 @@ const TakealotSettingsPage = ({ params }: { params: Promise<{ integrationId: str
                     ? 'bg-gray-400 text-gray-600 cursor-not-allowed'
                     : 'bg-gradient-to-r from-purple-600 to-violet-600 hover:from-purple-700 hover:to-violet-700 text-white'
                 }`}
-              >
-                {fetchOperations['sales_sls_30d']?.isRunning ? (
+              >                {fetchOperations['sales_sls_30d']?.isRunning ? (
                   <div className="flex items-center justify-center space-x-2">
                     <div className="w-4 h-4 border-2 border-gray-600 border-t-transparent rounded-full animate-spin"></div>
                     <span>{fetchOperations['sales_sls_30d']?.message || 'Fetching...'}</span>
                   </div>
                 ) : (
-                  'Fetch & Save now'
+                  'Sync & Optimize'
                 )}
               </button>
                 {fetchOperations['sales_sls_30d']?.isRunning && (
@@ -1877,14 +1872,13 @@ const TakealotSettingsPage = ({ params }: { params: Promise<{ integrationId: str
                     ? 'bg-gray-400 text-gray-600 cursor-not-allowed'
                     : 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white'
                 }`}
-              >
-                {fetchOperations['sales_sls_6m']?.isRunning ? (
+              >                {fetchOperations['sales_sls_6m']?.isRunning ? (
                   <div className="flex items-center justify-center space-x-2">
                     <div className="w-4 h-4 border-2 border-gray-600 border-t-transparent rounded-full animate-spin"></div>
                     <span>{fetchOperations['sales_sls_6m']?.message || 'Fetching...'}</span>
                   </div>
                 ) : (
-                  'Fetch & Save now'
+                  'Sync & Optimize'
                 )}
               </button>
                 {fetchOperations['sales_sls_6m']?.isRunning && (
@@ -1965,14 +1959,13 @@ const TakealotSettingsPage = ({ params }: { params: Promise<{ integrationId: str
                     ? 'bg-gray-400 text-gray-600 cursor-not-allowed'
                     : 'bg-gradient-to-r from-rose-600 to-pink-600 hover:from-rose-700 hover:to-pink-700 text-white'
                 }`}
-              >
-                {fetchOperations['sales_sls_all']?.isRunning ? (
+              >                {fetchOperations['sales_sls_all']?.isRunning ? (
                   <div className="flex items-center justify-center space-x-2">
                     <div className="w-4 h-4 border-2 border-gray-600 border-t-transparent rounded-full animate-spin"></div>
                     <span>{fetchOperations['sales_sls_all']?.message || 'Fetching...'}</span>
                   </div>
                 ) : (
-                  'Fetch & Save now'
+                  'Sync & Optimize'
                 )}
               </button>
               
@@ -2077,8 +2070,7 @@ const TakealotSettingsPage = ({ params }: { params: Promise<{ integrationId: str
                     ? 'bg-gray-400 text-gray-600 cursor-not-allowed'
                     : 'bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white'
                 }`}
-              >
-                {fetchOperations['products_prd_100_3h']?.isRunning ? (
+              >                {fetchOperations['products_prd_100_3h']?.isRunning ? (
                   <div className="flex items-center justify-center space-x-2">
                     <div className="w-4 h-4 border-2 border-gray-600 border-t-transparent rounded-full animate-spin"></div>
                     <span>{fetchOperations['products_prd_100_3h']?.message || 'Optimizing...'}</span>
@@ -2086,7 +2078,7 @@ const TakealotSettingsPage = ({ params }: { params: Promise<{ integrationId: str
                 ) : (
                   <div className="flex items-center justify-center space-x-2">
                     <FiPackage className="w-4 h-4" />
-                    <span>Fetch & Optimize</span>
+                    <span>Sync & Optimize</span>
                   </div>
                 )}
               </button>
@@ -2205,8 +2197,7 @@ const TakealotSettingsPage = ({ params }: { params: Promise<{ integrationId: str
                     ? 'bg-gray-400 text-gray-600 cursor-not-allowed'
                     : 'bg-gradient-to-r from-cyan-600 to-sky-600 hover:from-cyan-700 hover:to-sky-700 text-white'
                 }`}
-              >
-                {fetchOperations['products_prd_200_man']?.isRunning ? (
+              >                {fetchOperations['products_prd_200_man']?.isRunning ? (
                   <div className="flex items-center justify-center space-x-2">
                     <div className="w-4 h-4 border-2 border-gray-600 border-t-transparent rounded-full animate-spin"></div>
                     <span>{fetchOperations['products_prd_200_man']?.message || 'Optimizing...'}</span>
@@ -2214,7 +2205,7 @@ const TakealotSettingsPage = ({ params }: { params: Promise<{ integrationId: str
                 ) : (
                   <div className="flex items-center justify-center space-x-2">
                     <FiPackage className="w-4 h-4" />
-                    <span>Fetch & Optimize</span>
+                    <span>Sync & Optimize</span>
                   </div>
                 )}
               </button>
@@ -2334,8 +2325,7 @@ const TakealotSettingsPage = ({ params }: { params: Promise<{ integrationId: str
                     ? 'bg-gray-400 text-gray-600 cursor-not-allowed'
                     : 'bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 text-white'
                 }`}
-              >
-                {fetchOperations['products_prd_all_6h']?.isRunning ? (
+              >                {fetchOperations['products_prd_all_6h']?.isRunning ? (
                   <div className="flex items-center justify-center space-x-2">
                     <div className="w-4 h-4 border-2 border-gray-600 border-t-transparent rounded-full animate-spin"></div>
                     <span>{fetchOperations['products_prd_all_6h']?.message || 'Optimizing...'}</span>
@@ -2343,7 +2333,7 @@ const TakealotSettingsPage = ({ params }: { params: Promise<{ integrationId: str
                 ) : (
                   <div className="flex items-center justify-center space-x-2">
                     <FiPackage className="w-4 h-4" />
-                    <span>Fetch & Optimize</span>
+                    <span>Sync & Optimize</span>
                   </div>
                 )}
               </button>
@@ -2465,8 +2455,7 @@ const TakealotSettingsPage = ({ params }: { params: Promise<{ integrationId: str
                       ? 'bg-gray-400 text-gray-600 cursor-not-allowed'
                       : 'bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700 text-white'
                   }`}
-                >
-                  {fetchOperations['products_prd_all_12h']?.isRunning ? (
+                >                  {fetchOperations['products_prd_all_12h']?.isRunning ? (
                     <div className="flex items-center justify-center space-x-2">
                       <div className="w-4 h-4 border-2 border-gray-600 border-t-transparent rounded-full animate-spin"></div>
                       <span>{fetchOperations['products_prd_all_12h']?.message || 'Optimizing...'}</span>
@@ -2474,7 +2463,7 @@ const TakealotSettingsPage = ({ params }: { params: Promise<{ integrationId: str
                   ) : (
                     <div className="flex items-center justify-center space-x-2">
                       <FiPackage className="w-4 h-4" />
-                      <span>Fetch & Optimize</span>
+                      <span>Sync & Optimize</span>
                     </div>
                   )}
                 </button>

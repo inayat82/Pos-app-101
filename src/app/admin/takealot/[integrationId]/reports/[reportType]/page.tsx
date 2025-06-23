@@ -84,13 +84,61 @@ export default function ReportViewPage({ params }: ReportViewProps) {
   const [totalPages, setTotalPages] = useState(1);  // Sorting state
   const [sortField, setSortField] = useState<keyof ProductPerformanceData>('qtyRequire');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
-
   // Search state
   const [searchTerm, setSearchTerm] = useState('');
+  const [filteredData, setFilteredData] = useState<ProductPerformanceData[]>([]);
 
   // Calculation state
   const [isRecalculating, setIsRecalculating] = useState(false);
   const [recalculationProgress, setRecalculationProgress] = useState<string>('');
+
+  // Filter and search logic
+  useEffect(() => {
+    if (!allProductData.length) {
+      setFilteredData([]);
+      return;
+    }
+
+    let filtered = allProductData;
+    
+    // Apply search filter
+    if (searchTerm.trim()) {
+      const searchLower = searchTerm.toLowerCase();
+      filtered = allProductData.filter(product => 
+        product.title.toLowerCase().includes(searchLower) ||
+        product.sku.toLowerCase().includes(searchLower) ||
+        (product.tsin_id && product.tsin_id.toString().toLowerCase().includes(searchLower))
+      );
+    }
+
+    setFilteredData(filtered);
+    setCurrentPage(1); // Reset to first page when search changes
+  }, [allProductData, searchTerm]);
+
+  // Update productData based on pagination from filtered data
+  useEffect(() => {
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    const endIndex = startIndex + itemsPerPage;
+    
+    // Sort filtered data
+    const sorted = [...filteredData].sort((a, b) => {
+      const aValue = a[sortField];
+      const bValue = b[sortField];
+      
+      if (typeof aValue === 'string' && typeof bValue === 'string') {
+        return sortDirection === 'asc' 
+          ? aValue.localeCompare(bValue)
+          : bValue.localeCompare(aValue);
+      }
+      
+      const aNum = Number(aValue) || 0;
+      const bNum = Number(bValue) || 0;
+      return sortDirection === 'asc' ? aNum - bNum : bNum - aNum;
+    });
+
+    setProductData(sorted.slice(startIndex, endIndex));
+    setTotalPages(Math.ceil(filteredData.length / itemsPerPage));
+  }, [filteredData, currentPage, itemsPerPage, sortField, sortDirection]);
 
   // Report type configurations
   const reportConfigs = {
@@ -426,28 +474,8 @@ export default function ReportViewPage({ params }: ReportViewProps) {
                     <option value={100}>100</option>
                     <option value={200}>200</option>
                   </select>
-                  <span className="text-sm text-gray-600">per page</span>
-                </div>
+                  <span className="text-sm text-gray-600">per page</span>                </div>
 
-                {/* Search Box */}
-                <div className="relative flex-1 max-w-md">
-                  <FiSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
-                  <input
-                    type="text"
-                    placeholder="Search products by title, SKU, or TSIN..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-                  />
-                  {searchTerm && (
-                    <button
-                      onClick={() => setSearchTerm('')}
-                      className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                    >
-                      ×
-                    </button>
-                  )}
-                </div>
                   <div className="flex items-center space-x-2">
                   <button                    onClick={handleRecalculateMetrics}
                     disabled={loading || isRecalculating}
@@ -680,46 +708,96 @@ export default function ReportViewPage({ params }: ReportViewProps) {
                     <div className="text-gray-600">Avg Return %</div>
                   </div>
                 </div>
-              </div>              {/* Top Pagination */}
-              {totalPages > 1 && (
-                <div className="flex items-center justify-between mb-4 bg-gray-50 border border-gray-200 rounded p-3">
-                  <div className="text-sm text-gray-600">
-                    Showing <span className="font-semibold text-gray-900">{((currentPage - 1) * itemsPerPage) + 1}-{Math.min(currentPage * itemsPerPage, allProductData.length)}</span> of <span className="font-semibold text-gray-900">{allProductData.length}</span> products
-                  </div>                  <div className="flex items-center space-x-1">
+              </div>              {/* Improved Top Controls - Search after pagination info */}
+              <div className="space-y-4 mb-4">
+                {/* Pagination Info and Controls */}
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-gray-50 border border-gray-200 rounded-lg p-4">
+                  <div className="flex items-center space-x-6">
+                    <div className="text-sm text-gray-600">
+                      Showing <span className="font-semibold text-gray-900">{((currentPage - 1) * itemsPerPage) + 1}-{Math.min(currentPage * itemsPerPage, filteredData.length)}</span> of <span className="font-semibold text-gray-900">{filteredData.length}</span> products
+                      {searchTerm && (
+                        <span className="text-blue-600 ml-1">
+                          (filtered from {allProductData.length} total)
+                        </span>
+                      )}
+                    </div>
+                    
+                    {/* Search Box - Now after pagination info */}
+                    <div className="relative max-w-md">
+                      <FiSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+                      <input
+                        type="text"
+                        placeholder="Search products, SKU, or TSIN..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="w-full pl-10 pr-10 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                      />
+                      {searchTerm && (
+                        <button
+                          onClick={() => setSearchTerm('')}
+                          className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full w-5 h-5 flex items-center justify-center"
+                          title="Clear search"
+                        >
+                          ×
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Items per page selector */}
+                  <div className="flex items-center space-x-3 bg-white border border-gray-300 rounded-lg px-3 py-2">
+                    <span className="text-sm text-gray-600">Show:</span>
+                    <select
+                      value={itemsPerPage}
+                      onChange={(e) => handleItemsPerPageChange(Number(e.target.value))}
+                      className="border-0 bg-transparent text-sm focus:outline-none focus:ring-0 pr-8"
+                    >
+                      <option value={25}>25</option>
+                      <option value={50}>50</option>
+                      <option value={100}>100</option>
+                      <option value={200}>200</option>
+                    </select>
+                    <span className="text-sm text-gray-600">per page</span>
+                  </div>
+                </div>
+
+                {/* Pagination Controls */}
+                {totalPages > 1 && (
+                  <div className="flex items-center justify-center space-x-1 bg-white border border-gray-200 rounded-lg p-3">
                     <button
                       onClick={() => handlePageChange(1)}
                       disabled={currentPage === 1}
-                      className="px-2 py-1 text-sm rounded border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="px-3 py-1 text-sm rounded border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       First
                     </button>
                     <button
                       onClick={() => handlePageChange(currentPage - 1)}
                       disabled={currentPage === 1}
-                      className="px-2 py-1 text-sm rounded border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="px-3 py-1 text-sm rounded border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       Prev
                     </button>
-                    <span className="px-3 py-1 text-sm font-medium text-gray-700 bg-blue-50 border border-blue-200 rounded">
+                    <span className="px-4 py-1 text-sm font-medium text-gray-700 bg-blue-50 border border-blue-200 rounded">
                       {currentPage} of {totalPages}
                     </span>
                     <button
                       onClick={() => handlePageChange(currentPage + 1)}
                       disabled={currentPage === totalPages}
-                      className="px-2 py-1 text-sm rounded border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="px-3 py-1 text-sm rounded border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       Next
                     </button>
                     <button
                       onClick={() => handlePageChange(totalPages)}
                       disabled={currentPage === totalPages}
-                      className="px-2 py-1 text-sm rounded border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="px-3 py-1 text-sm rounded border border-gray-300 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       Last
                     </button>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
 
             {productData.length === 0 ? (

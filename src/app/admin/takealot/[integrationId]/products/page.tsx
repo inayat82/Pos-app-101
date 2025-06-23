@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { FiSearch, FiRefreshCw, FiPackage, FiExternalLink, FiEye, FiFilter, FiX, FiEdit, FiTarget } from 'react-icons/fi';
+import { FiSearch, FiRefreshCw, FiPackage, FiExternalLink, FiEye, FiFilter, FiX, FiEdit } from 'react-icons/fi';
 import { useAuth } from '@/context/AuthContext';
 import { usePageTitle } from '@/context/PageTitleContext';
 import { db } from '@/lib/firebase/firebase';
@@ -720,58 +720,7 @@ export default function TakealotProductsPage({ params }: { params: Promise<{ int
                 </div>
               </div>
             )}
-          </div>
-        )}
-
-        {/* Calculation Status Indicator */}
-        {products.length > 0 && (
-          <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center">
-                <FiTarget className="h-5 w-5 text-blue-600 mr-3" />
-                <div>
-                  <h4 className="text-sm font-semibold text-blue-900">Calculation Status Overview</h4>
-                  <p className="text-xs text-blue-700 mt-1">
-                    Showing calculation method distribution across your products
-                  </p>
-                </div>
-              </div>
-              <div className="text-xs text-blue-600 font-medium">
-                {products.length} products loaded
-              </div>
-            </div>
-            
-            <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="bg-white rounded-lg p-3 border border-blue-100">
-                <div className="text-lg font-bold text-green-700">
-                  {products.filter(p => p.has_tsin_metrics).length}
-                </div>
-                <div className="text-xs text-green-600">TSIN-based calculations</div>
-                <div className="text-xs text-green-500 mt-1">⚡ Enhanced & faster</div>
-              </div>
-              <div className="bg-white rounded-lg p-3 border border-orange-100">
-                <div className="text-lg font-bold text-orange-700">
-                  {products.filter(p => p.has_legacy_metrics && !p.has_tsin_metrics).length}
-                </div>
-                <div className="text-xs text-orange-600">Legacy calculations only</div>
-                <div className="text-xs text-orange-500 mt-1">📊 Needs upgrade</div>
-              </div>
-              <div className="bg-white rounded-lg p-3 border border-gray-100">
-                <div className="text-lg font-bold text-gray-700">
-                  {products.filter(p => !p.has_tsin_metrics && !p.has_legacy_metrics).length}
-                </div>
-                <div className="text-xs text-gray-600">No calculations</div>
-                <div className="text-xs text-gray-500 mt-1">⚠️ Run recalculation</div>
-              </div>
-            </div>
-            
-            {products.filter(p => !p.has_tsin_metrics && !p.has_legacy_metrics).length > 0 && (
-              <div className="mt-3 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-800">
-                <strong>Tip:</strong> Go to Reports → Product Performance and click "Recalc Metrics (TSIN)" to calculate missing metrics.
-              </div>
-            )}
-          </div>
-        )}
+          </div>        )}
       </div>
 
       {/* Right Sidebar - Filters */}
