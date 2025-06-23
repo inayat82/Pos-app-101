@@ -8,13 +8,9 @@ export async function GET(request: NextRequest) {
     const integrationId = searchParams.get('integrationId');
     const limit = parseInt(searchParams.get('limit') || '20'); // Default to 20 per page
     const page = parseInt(searchParams.get('page') || '1'); // Default to page 1
-    const offset = (page - 1) * limit;
-
-    if (!integrationId) {
+    const offset = (page - 1) * limit;    if (!integrationId) {
       return NextResponse.json({ error: 'Missing integrationId parameter' }, { status: 400 });
     }
-
-    console.log(`Fetching logs for integration: ${integrationId}, page: ${page}, limit: ${limit}`);
 
     // Verify integration exists
     const integrationRef = db.collection('takealotIntegrations').doc(integrationId);
@@ -50,12 +46,8 @@ export async function GET(request: NextRequest) {
       const dateA = new Date(a.createdAt || 0);
       const dateB = new Date(b.createdAt || 0);
       return dateB.getTime() - dateA.getTime();
-    });
-
-    // Apply pagination
+    });    // Apply pagination
     const paginatedLogs = allLogs.slice(offset, offset + limit);
-
-    console.log(`Found ${totalLogs} total logs, showing ${paginatedLogs.length} for page ${page}`);
 
     return NextResponse.json({ 
       logs: paginatedLogs,

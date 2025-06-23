@@ -96,18 +96,18 @@ export default function TakealotProductsPage({ params }: { params: Promise<{ int
             stock_cpt: stockAtTakealot.find((s: any) => s.warehouse?.name === 'CPT')?.quantity_available || 0,
             stock_jhb: stockAtTakealot.find((s: any) => s.warehouse?.name === 'JHB')?.quantity_available || 0,            stock_on_way: data.total_stock_on_way || 0,
             // POS integration fields
-            pos_barcode: data.barcode || '', // Use API barcode as placeholder            // CALCULATED METRICS (prioritize TSIN-based calculations with debugging)
-            qty_require: data.tsinCalculatedMetrics?.qtyRequire || data.calculatedMetrics?.qtyRequire || data.qtyRequire || 0,
-            total_sold: data.tsinCalculatedMetrics?.totalSold || data.calculatedMetrics?.totalSold || data.totalSold || 0,
-            sold_30_days: data.tsinCalculatedMetrics?.last30DaysSold || data.calculatedMetrics?.last30DaysSold || data.last30DaysSold || 0,
-            returned_30_days: data.tsinCalculatedMetrics?.last30DaysReturn || data.calculatedMetrics?.last30DaysReturn || data.last30DaysReturn || 0,
-            avg_selling_price: data.tsinCalculatedMetrics?.avgSellingPrice || data.calculatedMetrics?.avgSellingPrice || data.avgSellingPrice || data.selling_price || 0,
-            return_rate: data.tsinCalculatedMetrics?.returnRate || data.calculatedMetrics?.returnRate || data.returnRate || 0,
-            days_since_last_order: data.tsinCalculatedMetrics?.daysSinceLastOrder || data.calculatedMetrics?.daysSinceLastOrder || data.daysSinceLastOrder || 999,
+            pos_barcode: data.barcode || '', // Use API barcode as placeholder            // CALCULATED METRICS (prioritize root level calculated fields from TSIN calculation)
+            qty_require: data.quantity_required || data.tsinCalculatedMetrics?.qtyRequire || data.calculatedMetrics?.qtyRequire || data.qtyRequire || 0,
+            total_sold: data.total_sold || data.tsinCalculatedMetrics?.totalSold || data.calculatedMetrics?.totalSold || data.totalSold || 0,
+            sold_30_days: data.last_30_days_sold || data.tsinCalculatedMetrics?.last30DaysSold || data.calculatedMetrics?.last30DaysSold || data.last30DaysSold || 0,
+            returned_30_days: data.last_30_days_return || data.tsinCalculatedMetrics?.last30DaysReturn || data.calculatedMetrics?.last30DaysReturn || data.last30DaysReturn || 0,
+            avg_selling_price: data.avg_selling_price || data.tsinCalculatedMetrics?.avgSellingPrice || data.calculatedMetrics?.avgSellingPrice || data.avgSellingPrice || data.selling_price || 0,
+            return_rate: data.return_rate || data.tsinCalculatedMetrics?.returnRate || data.calculatedMetrics?.returnRate || data.returnRate || 0,
+            days_since_last_order: data.days_since_last_order || data.tsinCalculatedMetrics?.daysSinceLastOrder || data.calculatedMetrics?.daysSinceLastOrder || data.daysSinceLastOrder || 999,
             // Metadata for tracking calculations (IMPORTANT FOR DEBUGGING)
             calculation_method: data.calculationMethod || (data.tsinCalculatedMetrics ? 'TSIN-based' : 'Legacy'),
-            metrics_last_calculated: data.tsinCalculatedMetrics?.lastCalculated || data.calculatedMetrics?.lastCalculated || null,
-            has_tsin_metrics: !!data.tsinCalculatedMetrics,
+            metrics_last_calculated: data.lastTsinCalculation || data.tsinCalculatedMetrics?.lastCalculated || data.calculatedMetrics?.lastCalculated || null,
+            has_tsin_metrics: !!data.lastTsinCalculation || !!data.tsinCalculatedMetrics,
             has_legacy_metrics: !!data.calculatedMetrics,
           };
         });
@@ -143,17 +143,16 @@ export default function TakealotProductsPage({ params }: { params: Promise<{ int
             stock_jhb: stockAtTakealot.find((s: any) => s.warehouse?.name === 'JHB')?.quantity_available || 0,
             stock_on_way: data.total_stock_on_way || 0,
             // POS integration fields
-            pos_barcode: data.barcode || '', // Use API barcode as placeholder
-            // CALCULATED METRICS (from database calculations)
-            qty_require: data.qtyRequire || data.calculatedMetrics?.qtyRequire || 0,
-            total_sold: data.totalSold || data.calculatedMetrics?.totalSold || 0,
-            sold_30_days: data.last30DaysSold || data.calculatedMetrics?.last30DaysSold || 0,
-            returned_30_days: data.last30DaysReturn || data.calculatedMetrics?.last30DaysReturn || 0,
-            avg_selling_price: data.avgSellingPrice || data.calculatedMetrics?.avgSellingPrice || data.selling_price || 0,
-            return_rate: data.returnRate || data.calculatedMetrics?.returnRate || 0,
-            days_since_last_order: data.daysSinceLastOrder || data.calculatedMetrics?.daysSinceLastOrder || 999,
+            pos_barcode: data.barcode || '', // Use API barcode as placeholder            // CALCULATED METRICS (prioritize root level calculated fields from TSIN calculation)
+            qty_require: data.quantity_required || data.qtyRequire || data.calculatedMetrics?.qtyRequire || 0,
+            total_sold: data.total_sold || data.totalSold || data.calculatedMetrics?.totalSold || 0,
+            sold_30_days: data.last_30_days_sold || data.last30DaysSold || data.calculatedMetrics?.last30DaysSold || 0,
+            returned_30_days: data.last_30_days_return || data.last30DaysReturn || data.calculatedMetrics?.last30DaysReturn || 0,
+            avg_selling_price: data.avg_selling_price || data.avgSellingPrice || data.calculatedMetrics?.avgSellingPrice || data.selling_price || 0,
+            return_rate: data.return_rate || data.returnRate || data.calculatedMetrics?.returnRate || 0,
+            days_since_last_order: data.days_since_last_order || data.daysSinceLastOrder || data.calculatedMetrics?.daysSinceLastOrder || 999,
             // Metadata for tracking calculations
-            metrics_last_calculated: data.metricsLastCalculated || data.calculatedMetrics?.lastCalculated || null,
+            metrics_last_calculated: data.lastTsinCalculation || data.metricsLastCalculated || data.calculatedMetrics?.lastCalculated || null,
           };});        
         // Set products with calculated data
         setProducts(productData);

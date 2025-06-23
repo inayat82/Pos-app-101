@@ -25,7 +25,8 @@ import {
 import { useAuth } from '@/context/AuthContext';
 import { usePageTitle } from '@/context/PageTitleContext';
 import { getSavedReport, saveReportToDatabase } from '@/lib/reportDatabaseService';
-import { getOptimizedProductData } from '@/lib/reportCacheService';
+import { getOptimizedProductData, getFastProductData } from '@/lib/reportCacheService';
+import { runQuickCalculation } from '@/lib/quickCalculationService';
 
 interface ReportViewProps {
   params: Promise<{ 
@@ -82,63 +83,13 @@ export default function ReportViewPage({ params }: ReportViewProps) {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(50);
   const [totalPages, setTotalPages] = useState(1);  // Sorting state
-  const [sortField, setSortField] = useState<keyof ProductPerformanceData>('qtyRequire');
+  const [sortField, setSortField] = useState<keyof ProductPerformanceData>('last30DaysSold');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   // Search state
   const [searchTerm, setSearchTerm] = useState('');
-  const [filteredData, setFilteredData] = useState<ProductPerformanceData[]>([]);
-
-  // Calculation state
+  const [filteredData, setFilteredData] = useState<ProductPerformanceData[]>([]);  // Calculation state
   const [isRecalculating, setIsRecalculating] = useState(false);
   const [recalculationProgress, setRecalculationProgress] = useState<string>('');
-
-  // Filter and search logic
-  useEffect(() => {
-    if (!allProductData.length) {
-      setFilteredData([]);
-      return;
-    }
-
-    let filtered = allProductData;
-    
-    // Apply search filter
-    if (searchTerm.trim()) {
-      const searchLower = searchTerm.toLowerCase();
-      filtered = allProductData.filter(product => 
-        product.title.toLowerCase().includes(searchLower) ||
-        product.sku.toLowerCase().includes(searchLower) ||
-        (product.tsin_id && product.tsin_id.toString().toLowerCase().includes(searchLower))
-      );
-    }
-
-    setFilteredData(filtered);
-    setCurrentPage(1); // Reset to first page when search changes
-  }, [allProductData, searchTerm]);
-
-  // Update productData based on pagination from filtered data
-  useEffect(() => {
-    const startIndex = (currentPage - 1) * itemsPerPage;
-    const endIndex = startIndex + itemsPerPage;
-    
-    // Sort filtered data
-    const sorted = [...filteredData].sort((a, b) => {
-      const aValue = a[sortField];
-      const bValue = b[sortField];
-      
-      if (typeof aValue === 'string' && typeof bValue === 'string') {
-        return sortDirection === 'asc' 
-          ? aValue.localeCompare(bValue)
-          : bValue.localeCompare(aValue);
-      }
-      
-      const aNum = Number(aValue) || 0;
-      const bNum = Number(bValue) || 0;
-      return sortDirection === 'asc' ? aNum - bNum : bNum - aNum;
-    });
-
-    setProductData(sorted.slice(startIndex, endIndex));
-    setTotalPages(Math.ceil(filteredData.length / itemsPerPage));
-  }, [filteredData, currentPage, itemsPerPage, sortField, sortDirection]);
 
   // Report type configurations
   const reportConfigs = {
@@ -187,13 +138,20 @@ export default function ReportViewPage({ params }: ReportViewProps) {
       setPageTitle(currentReport.title);
     }
     return () => setPageTitle('');
-  }, [setPageTitle, currentReport]);
-  useEffect(() => {
+  }, [setPageTitle, currentReport]);  useEffect(() => {
     if (currentUser && integrationId && reportType) {
-      loadReportData(false); // Load saved report by default
+      loadReportData(false, false); // Load fast data by default
     }
   }, [currentUser, integrationId, reportType]);  // Update pagination when data changes
-  useEffect(() => {    // Filter the data first by search term
+  useEffect(() => {
+    if (!allProductData.length) {
+      setProductData([]);
+      setFilteredData([]);
+      setTotalPages(1);
+      return;
+    }
+
+    // Filter the data first by search term
     let filteredData = allProductData;
     if (searchTerm.trim()) {
       const searchLower = searchTerm.toLowerCase();
@@ -228,16 +186,22 @@ export default function ReportViewPage({ params }: ReportViewProps) {
       return sortDirection === 'asc' ? aStr.localeCompare(bStr) : bStr.localeCompare(aStr);
     });
 
+    // Calculate pagination
     const total = Math.ceil(sortedData.length / itemsPerPage);
     setTotalPages(total);
     
     // Update current page data
     const startIndex = (currentPage - 1) * itemsPerPage;
     const endIndex = startIndex + itemsPerPage;
-    setProductData(sortedData.slice(startIndex, endIndex));
+    const paginatedData = sortedData.slice(startIndex, endIndex);
     
-    // Reset to page 1 when search changes
-    if (searchTerm && currentPage > 1) {
+    console.log(`Pagination Debug: Total products: ${allProductData.length}, Filtered: ${sortedData.length}, Page ${currentPage}/${total}, Showing: ${paginatedData.length} items`);
+    
+    setProductData(paginatedData);
+    setFilteredData(sortedData);
+    
+    // Reset to page 1 when search changes and current page is invalid
+    if (searchTerm && currentPage > total && total > 0) {
       setCurrentPage(1);
     }
   }, [allProductData, currentPage, itemsPerPage, sortField, sortDirection, searchTerm]);
@@ -246,14 +210,13 @@ export default function ReportViewPage({ params }: ReportViewProps) {
     if (product.stock === 0) return 'Disable';
     if (product.stock < 5) return 'Not Buyable';
     return 'Buyable';
-  };
-  const loadReportData = async (forceGenerate: boolean = false) => {
-    setLoading(true);
+  };  const loadReportData = async (forceGenerate: boolean = false, useAccurateCalculations: boolean = false) => {    setLoading(true);
     setError(null);
     setUsesSavedReport(false);
 
-    try {      if (reportType === 'product-performance') {
-        if (!forceGenerate) {
+    try {      
+      if (reportType === 'product-performance') {
+        if (!forceGenerate && !useAccurateCalculations) {
           // Try to load saved report first
           const savedReport = await getSavedReport(integrationId, reportType);
           if (savedReport) {
@@ -264,8 +227,38 @@ export default function ReportViewPage({ params }: ReportViewProps) {
             setLoading(false);
             return;
           }
-        }// Generate new report
-        console.log('Generating new report data for integration:', integrationId);
+        }
+
+        // Check if we should use fast loading or accurate calculations
+        if (!useAccurateCalculations && !forceGenerate) {
+          // Use fast loading for initial page load
+          console.log('Loading fast product data (no calculations)...');
+          const fastData = await getFastProductData(integrationId);
+          
+          if (!fastData || fastData.length === 0) {
+            throw new Error(`No product data found for integration "${integrationId}". Please ensure products are synced.`);
+          }          setAllProductData(fastData);
+          setUsesSavedReport(false);
+
+          // Create basic metadata for fast data
+          const metadata = {
+            totalProducts: fastData.length,
+            totalSales: fastData.reduce((sum: number, p: ProductPerformanceData) => sum + p.totalSold, 0),
+            totalReturns: fastData.reduce((sum: number, p: ProductPerformanceData) => sum + p.totalReturn, 0),
+            last30DaysSales: fastData.reduce((sum: number, p: ProductPerformanceData) => sum + p.last30DaysSold, 0),
+            avgReturnRate: fastData.length > 0 ? fastData.reduce((sum: number, p: ProductPerformanceData) => sum + p.returnRate, 0) / fastData.length : 0,
+            lastGenerated: new Date(),
+            generatedBy: currentUser?.uid || 'system',
+            version: 'fast_load'
+          };
+          
+          setReportMetadata(metadata);
+          setLoading(false);
+          return;
+        }
+
+        // Generate new report with accurate calculations
+        console.log('Generating new report data with accurate calculations for integration:', integrationId);
         const productData = await getOptimizedProductData(integrationId);
         console.log('Retrieved product data:', productData?.length || 0, 'items');
         
@@ -278,10 +271,9 @@ export default function ReportViewPage({ params }: ReportViewProps) {
         const enhancedData = productData.map((product: any) => ({
           ...product,
           productStatus: getProductStatus(product)
-        }));
-        
+        }));        
         setAllProductData(enhancedData);
-        setUsesSavedReport(false);        // Save the new report to database
+        setUsesSavedReport(false);// Save the new report to database
         if (currentUser && enhancedData.length > 0) {
           try {
             await saveReportToDatabase(integrationId, reportType, enhancedData, currentUser.uid);
@@ -334,8 +326,8 @@ export default function ReportViewPage({ params }: ReportViewProps) {
     // TODO: Implement export functionality
     alert('Export functionality coming soon!');
   };  const handleGenerateReport = () => {
-    loadReportData(true); // Force generate new report
-  };  const handleRecalculateMetrics = async () => {
+    loadReportData(true, true); // Force generate new report with accurate calculations
+  };const handleRecalculateMetrics = async () => {
     if (!currentUser || isRecalculating) return;
 
     setIsRecalculating(true);
@@ -364,11 +356,10 @@ export default function ReportViewPage({ params }: ReportViewProps) {
 
       if (data.success) {
         setRecalculationProgress(`🎉 Successfully updated ${data.productsUpdated} products with TSIN-based calculations!`);
-        
-        // Show success message for a moment before refreshing
+          // Show success message for a moment before refreshing
         setTimeout(() => {
           setRecalculationProgress('Loading updated data with enhanced calculations...');
-          loadReportData(true); // Force generate new report with updated data
+          loadReportData(true, true); // Force generate new report with accurate calculations
           
           setTimeout(() => {
             setIsRecalculating(false);
@@ -381,6 +372,45 @@ export default function ReportViewPage({ params }: ReportViewProps) {
     } catch (error) {
       console.error('Error recalculating metrics:', error);
       setError(`Recalculation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setIsRecalculating(false);
+      setRecalculationProgress('');
+    }
+  };
+
+  const handleQuickCalculation = async () => {
+    if (!currentUser || isRecalculating) return;
+
+    setIsRecalculating(true);
+    setRecalculationProgress('Starting quick calculation to populate missing fields...');
+    setError(null);
+
+    try {
+      // Clear the current data to show fresh calculations
+      setProductData([]);
+      setAllProductData([]);
+      
+      const result = await runQuickCalculation(integrationId, (progress) => {
+        setRecalculationProgress(`Processing ${progress.processed}/${progress.total}: ${progress.currentProduct}`);
+      });
+
+      if (result.success > 0) {
+        setRecalculationProgress(`🎉 Successfully calculated ${result.success} products! Loading updated data...`);
+        
+        // Reload data after calculation
+        setTimeout(() => {
+          loadReportData(false, false); // Load fast data to see the updated calculations
+          
+          setTimeout(() => {
+            setIsRecalculating(false);
+            setRecalculationProgress('');
+          }, 1000);
+        }, 1000);
+      } else {
+        throw new Error('No products were updated');
+      }
+    } catch (error) {
+      console.error('Error in quick calculation:', error);
+      setError(`Quick calculation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
       setIsRecalculating(false);
       setRecalculationProgress('');
     }
@@ -441,29 +471,15 @@ export default function ReportViewPage({ params }: ReportViewProps) {
                 </Link>
                 
                 <div className="h-6 w-px bg-gray-300"></div>
-                
-                <div className="flex items-center">
+                  <div className="flex items-center">
                   <IconComponent className={`h-6 w-6 ${currentReport.color} mr-3`} />
                   <div>
                     <h1 className="text-lg font-semibold text-gray-900">
                       {currentReport.title}
                     </h1>
-                    <p className="text-sm text-gray-600">
-                      {currentReport.description}
-                    </p>
                   </div>
                 </div>
               </div>              <div className="flex items-center space-x-2">
-                {reportMetadata && (
-                  <div className="text-sm text-gray-500 mr-4 hidden lg:block">
-                    {new Date(reportMetadata.lastGenerated).toLocaleDateString()} • {new Date(reportMetadata.lastGenerated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    {usesSavedReport && (
-                      <span className="ml-2 text-xs bg-green-100 text-green-800 px-2 py-1 rounded-full">
-                        Saved
-                      </span>
-                    )}
-                  </div>
-                )}
                   <div className="flex items-center space-x-2 bg-gray-50 rounded-lg px-3 py-2">
                   <select
                     value={itemsPerPage}
@@ -474,19 +490,25 @@ export default function ReportViewPage({ params }: ReportViewProps) {
                     <option value={100}>100</option>
                     <option value={200}>200</option>
                   </select>
-                  <span className="text-sm text-gray-600">per page</span>                </div>
-
-                  <div className="flex items-center space-x-2">
-                  <button                    onClick={handleRecalculateMetrics}
+                  <span className="text-sm text-gray-600">per page</span>                </div>                  <div className="flex items-center space-x-2">
+                  <button
+                    onClick={handleQuickCalculation}
                     disabled={loading || isRecalculating}
-                    className="flex items-center px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 text-sm font-medium shadow-md hover:shadow-lg transform hover:-translate-y-0.5"
-                    title="Recalculate all product metrics using optimized TSIN-based calculations for better speed and accuracy"
+                    className="flex items-center px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium"
+                    title="Quick calculation using sales_units data (faster)"
+                  >
+                    <FiRefreshCw className={`mr-2 h-4 w-4 ${isRecalculating ? 'animate-spin' : ''}`} />
+                    Quick Calc
+                  </button>
+                  
+                  <button
+                    onClick={handleRecalculateMetrics}
+                    disabled={loading || isRecalculating}
+                    className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium"
+                    title="Recalculate all product metrics with TSIN-based calculations"
                   >
                     <FiSettings className={`mr-2 h-4 w-4 ${isRecalculating ? 'animate-spin' : ''}`} />
-                    {isRecalculating ? 'TSIN Calculating...' : 'Recalc Metrics (TSIN)'}
-                    <span className="ml-2 bg-white bg-opacity-20 px-2 py-0.5 rounded text-xs">
-                      v2.0
-                    </span>
+                    {isRecalculating ? 'Calculating...' : 'Recalc Metrics'}
                   </button>
                   
                   <button
@@ -512,107 +534,27 @@ export default function ReportViewPage({ params }: ReportViewProps) {
           </div>
         </div>        {/* Content */}
         <div className="bg-gray-50">
-          <div className="px-4 lg:px-6 py-4">
-
-        {/* Last Generated Info */}
-        {reportMetadata && (
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-6">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center text-sm">
-                <FiCalendar className="h-4 w-4 text-blue-600 mr-2" />
-                <span className="text-blue-900 font-medium">
-                  Last Generated: {new Date(reportMetadata.lastGenerated).toLocaleDateString()}, {new Date(reportMetadata.lastGenerated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </span>
-                {usesSavedReport && (
-                  <span className="ml-3 text-xs bg-green-100 text-green-800 px-2 py-1 rounded-full">
-                    Using Saved Report
-                  </span>
-                )}
-              </div>
-              <div className="text-xs text-blue-700">
-                {allProductData.length} products • Version {reportMetadata.version}
-              </div>
-            </div>
-          </div>
-        )}        {/* Calculation Improvements Notice */}
-        {!isRecalculating && (
-          <div className="bg-gradient-to-r from-green-50 to-blue-50 border border-green-200 rounded-lg p-4 mb-6">
-            <div className="flex items-center justify-between">
+          <div className="px-4 lg:px-6 py-4">        {/* Recalculation Progress Bar - Only show during recalculation */}
+        {isRecalculating && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+            <div className="flex items-center justify-between mb-3">
               <div className="flex items-center">
-                <FiTarget className="h-5 w-5 text-green-600 mr-3" />
-                <div>
-                  <h4 className="text-sm font-semibold text-green-900">⚡ Enhanced TSIN-Based Calculation System</h4>
-                  <p className="text-xs text-green-700 mt-1">
-                    Now using TSIN as primary identifier for faster & more accurate metrics. Click "Recalc Metrics" to upgrade to the new system.
-                  </p>
-                </div>
+                <FiSettings className="h-5 w-5 text-blue-600 mr-2 animate-spin" />
+                <h3 className="text-sm font-medium text-blue-900">Recalculating Product Metrics</h3>
               </div>
-              <div className="text-xs text-green-600 font-medium">
-                v2.0 TSIN Available
-              </div>
-            </div>
-            <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2 text-xs">
-              <div className="flex items-center text-green-700">
-                <span className="w-2 h-2 bg-green-500 rounded-full mr-2"></span>
-                TSIN-first calculation priority
-              </div>
-              <div className="flex items-center text-green-700">
-                <span className="w-2 h-2 bg-blue-500 rounded-full mr-2"></span>
-                Optimized parallel processing
-              </div>
-              <div className="flex items-center text-green-700">
-                <span className="w-2 h-2 bg-purple-500 rounded-full mr-2"></span>
-                50% faster calculation times
-              </div>
-            </div>
-          </div>
-        )}{/* Recalculation Progress */}        {isRecalculating && (
-          <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-6 mb-6 shadow-sm">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center">
-                <FiSettings className="h-6 w-6 text-blue-600 mr-3 animate-spin" />
-                <h3 className="text-lg font-semibold text-blue-900">⚡ TSIN-Based Recalculation</h3>
-              </div>
-              <div className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-xs font-medium">
-                Enhanced Speed & Accuracy
+              <div className="bg-blue-100 text-blue-800 px-2 py-1 rounded text-xs font-medium">
+                Processing...
               </div>
             </div>
             
-            {/* Enhanced Progress Display */}
-            <div className="space-y-3">
-              <div className="flex justify-between items-center text-sm">
-                <span className="text-blue-700 font-medium">Processing products with TSIN-optimized algorithms...</span>
-                <span className="text-blue-600 text-xs bg-blue-100 px-2 py-1 rounded">
-                  Parallel Processing: 5x faster | TSIN Priority
-                </span>
-              </div>
-              
-              {recalculationProgress && (
-                <div className="bg-white border border-blue-200 rounded p-3">
-                  <p className="text-sm text-blue-800 leading-relaxed">{recalculationProgress}</p>
-                  
-                  {/* Enhanced progress bar */}
-                  <div className="mt-2 w-full bg-blue-100 rounded-full h-2">
-                    <div className="bg-gradient-to-r from-blue-400 to-indigo-500 h-2 rounded-full animate-pulse" style={{width: '75%'}}></div>
-                  </div>
-                </div>
-              )}
-              
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs text-blue-700">
-                <div className="flex items-center">
-                  <span className="w-2 h-2 bg-green-500 rounded-full mr-2 animate-pulse"></span>
-                  TSIN-first calculation priority
-                </div>
-                <div className="flex items-center">
-                  <span className="w-2 h-2 bg-blue-500 rounded-full mr-2 animate-pulse"></span>
-                  Optimized parallel processing
-                </div>
-                <div className="flex items-center">
-                  <span className="w-2 h-2 bg-purple-500 rounded-full mr-2 animate-pulse"></span>
-                  50% faster calculation times
+            {recalculationProgress && (
+              <div className="space-y-2">
+                <p className="text-sm text-blue-800">{recalculationProgress}</p>
+                <div className="w-full bg-blue-200 rounded-full h-2">
+                  <div className="bg-blue-600 h-2 rounded-full animate-pulse" style={{width: '70%'}}></div>
                 </div>
               </div>
-            </div>
+            )}
           </div>
         )}{loading ? (
           <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
@@ -809,95 +751,96 @@ export default function ReportViewPage({ params }: ReportViewProps) {
                 </p>
               </div>            ) : (
               <div className="bg-white border border-gray-200 overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full divide-y divide-gray-200 text-sm">
+                <div className="overflow-x-auto">                  <table className="w-full divide-y divide-gray-200 text-sm">
                     <thead className="bg-gray-50">
                       <tr>
-                        <th className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase w-16">
+                        <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide w-12">
                           Img
-                        </th>                        <th 
-                          className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100"
+                        </th>
+                        <th 
+                          className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-100"
                           onClick={() => handleSort('title')}
                         >
                           Product Title {getSortIcon('title')}
                         </th>
                         <th 
-                          className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 w-20"
+                          className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-100 w-20"
                           onClick={() => handleSort('tsin_id')}
                         >
                           TSIN {getSortIcon('tsin_id')}
                         </th>
                         <th 
-                          className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 w-24"
+                          className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-100 w-24"
                           onClick={() => handleSort('sku')}
                         >
                           SKU {getSortIcon('sku')}
                         </th>
                         <th 
-                          className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 w-20"
+                          className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-100 w-18"
                           onClick={() => handleSort('productStatus')}
                         >
                           Status {getSortIcon('productStatus')}
                         </th>
                         <th 
-                          className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 w-20"
+                          className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-100 w-16"
                           onClick={() => handleSort('avgSellingPrice')}
                         >
                           Price {getSortIcon('avgSellingPrice')}
-                        </th>                        <th 
-                          className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 w-16"
+                        </th>
+                        <th 
+                          className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-100 w-16"
                           onClick={() => handleSort('totalSold')}
                           title="Total units sold (all time) - calculated using TSIN matching for accuracy"
                         >
                           Total Sold {getSortIcon('totalSold')}
                         </th>
                         <th 
-                          className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 w-16"
+                          className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-100 w-16"
                           onClick={() => handleSort('totalReturn')}
                           title="Total returns (all time) - enhanced detection logic including 'Returned' status"
                         >
                           Total Return {getSortIcon('totalReturn')}
                         </th>
                         <th 
-                          className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 w-16"
+                          className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-100 w-16"
                           onClick={() => handleSort('last30DaysSold')}
                           title="Units sold in last 30 days - calculated using TSIN matching"
                         >
                           30D Sold {getSortIcon('last30DaysSold')}
                         </th>
                         <th 
-                          className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 w-20"
+                          className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-100 w-16"
                           onClick={() => handleSort('last30DaysReturn')}
                           title="Units returned in last 30 days - enhanced return detection"
                         >
-                          30 Days Return {getSortIcon('last30DaysReturn')}
+                          30D Return {getSortIcon('last30DaysReturn')}
                         </th>
                         <th 
-                          className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 w-16"
+                          className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-100 w-12"
                           onClick={() => handleSort('daysSinceLastOrder')}
                           title="Days Since Last Order"
                         >
                           DSO {getSortIcon('daysSinceLastOrder')}
                         </th>
                         <th 
-                          className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 w-20"
+                          className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-100 w-16"
                           onClick={() => handleSort('returnRate')}
                           title="Return Rate Percentage - (Total Returns ÷ Total Sold) × 100"
                         >
-                          Return Rate % {getSortIcon('returnRate')}
+                          Return % {getSortIcon('returnRate')}
                         </th>
                         <th 
-                          className="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 w-16"
+                          className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wide cursor-pointer hover:bg-gray-100 w-16"
                           onClick={() => handleSort('qtyRequire')}
                           title="Qty Required = 30 Days Sold - Stock on Way - Available Stock (Updated Formula)"
                         >
                           Qty Req {getSortIcon('qtyRequire')}
                         </th>
-                      </tr>                    </thead>
-                    <tbody className="bg-white divide-y divide-gray-200 text-sm">
+                      </tr>
+                    </thead>                    <tbody className="bg-white divide-y divide-gray-200 text-sm">
                       {productData.map((product, index) => (
                         <tr key={product.sku || index} className="hover:bg-gray-50">
-                          <td className="px-2 py-2">
+                          <td className="px-2 py-3">
                             {product.image_url ? (
                               <img
                                 src={product.image_url}
@@ -911,15 +854,16 @@ export default function ReportViewPage({ params }: ReportViewProps) {
                               <div className="h-10 w-10 bg-gray-100 rounded flex items-center justify-center">
                                 <FiPackage className="text-gray-400 h-4 w-4" />
                               </div>
-                            )}                          </td>
+                            )}
+                          </td>
                           
-                          <td className="px-2 py-2">
+                          <td className="px-3 py-3">
                             <div className="text-sm font-medium text-gray-900 max-w-xs truncate" title={product.title}>
                               {product.title}
                             </div>
                           </td>
 
-                          <td className="px-2 py-2 text-xs font-mono">
+                          <td className="px-2 py-3 text-xs font-mono">
                             {product.tsin_id ? (
                               <span 
                                 className="text-blue-600 cursor-pointer hover:underline"
@@ -933,11 +877,11 @@ export default function ReportViewPage({ params }: ReportViewProps) {
                             )}
                           </td>
                           
-                          <td className="px-2 py-2 text-xs font-mono">
+                          <td className="px-2 py-3 text-xs font-mono">
                             {product.sku}
                           </td>
                           
-                          <td className="px-2 py-2">
+                          <td className="px-2 py-3">
                             <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
                               product.productStatus === 'Buyable' 
                                 ? 'bg-green-100 text-green-800'
@@ -947,30 +891,31 @@ export default function ReportViewPage({ params }: ReportViewProps) {
                                 ? 'bg-red-100 text-red-800'
                                 : 'bg-gray-100 text-gray-800'
                             }`}>
-                              {product.productStatus === 'Not Buyable' ? 'Not Buy' : product.productStatus}                          </span>
+                              {product.productStatus === 'Not Buyable' ? 'Not Buy' : product.productStatus}
+                            </span>
                           </td>
                           
-                          <td className="px-2 py-2 text-sm font-medium">
+                          <td className="px-2 py-3 text-sm font-medium">
                             R{product.avgSellingPrice.toFixed(0)}
                           </td>
                           
-                          <td className="px-2 py-2 text-sm font-medium text-green-600">
+                          <td className="px-2 py-3 text-sm font-medium text-green-600">
                             {product.totalSold}
                           </td>
 
-                          <td className="px-2 py-2 text-sm font-medium text-red-600">
+                          <td className="px-2 py-3 text-sm font-medium text-red-600">
                             {product.totalReturn}
                           </td>
 
-                          <td className="px-2 py-2 text-sm font-medium text-blue-600">
+                          <td className="px-2 py-3 text-sm font-medium text-blue-600">
                             {product.last30DaysSold}
                           </td>
 
-                          <td className="px-2 py-2 text-sm font-medium text-red-600">
+                          <td className="px-2 py-3 text-sm font-medium text-red-600">
                             {product.last30DaysReturn}
                           </td>
                           
-                          <td className="px-2 py-2 text-sm">
+                          <td className="px-2 py-3 text-sm">
                             <span className={`font-medium ${
                               product.daysSinceLastOrder > 30 
                                 ? 'text-red-600' 
@@ -982,18 +927,19 @@ export default function ReportViewPage({ params }: ReportViewProps) {
                             </span>
                           </td>
 
-                          <td className="px-2 py-2 text-sm font-medium">
+                          <td className="px-2 py-3 text-sm font-medium">
                             <span className={`${
                             product.returnRate > 10 
                               ? 'text-red-600' 
                               : product.returnRate > 5 
-                              ? 'text-yellow-600'                              : 'text-green-600'
+                              ? 'text-yellow-600'
+                              : 'text-green-600'
                             }`}>
                               {product.returnRate.toFixed(1)}%
                             </span>
                           </td>
                           
-                          <td className="px-2 py-2 text-sm font-medium">
+                          <td className="px-2 py-3 text-sm font-medium">
                             <span className={`${
                               product.qtyRequire > 0 
                                 ? 'text-orange-600' 
@@ -1003,7 +949,8 @@ export default function ReportViewPage({ params }: ReportViewProps) {
                             </span>
                           </td>
                         </tr>
-                      ))}                    </tbody>
+                      ))}
+                    </tbody>
                   </table>
                 </div>
                 

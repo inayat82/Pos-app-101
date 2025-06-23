@@ -247,14 +247,14 @@ export async function calculateAllProductsWithTsinServer(
   integrationId: string,
   onProgress?: (progress: { processed: number; total: number; currentProduct: string }) => void
 ): Promise<{ success: number; errors: string[] }> {
-  console.log('Starting optimized TSIN-based calculation (Server-side)...');
+  console.log(`[TSIN CALC] Starting TSIN-based calculation for integration: ${integrationId}`);
   
   // Get all products for this integration using Firebase Admin
   const offersQuery = dbAdmin.collection('takealot_offers')
     .where('integrationId', '==', integrationId);
-  
-  const offersSnapshot = await offersQuery.get();
-  const totalProducts = offersSnapshot.size;
+    const offersSnapshot = await offersQuery.get();
+  const products = offersSnapshot.docs; // Get the actual documents
+  const totalProducts = products.length;
   
   if (totalProducts === 0) {
     throw new Error('No products found for this integration');
@@ -262,16 +262,15 @@ export async function calculateAllProductsWithTsinServer(
 
   console.log(`Found ${totalProducts} products to process with TSIN-based calculations`);
   
-  let successCount = 0;
-  const errors: string[] = [];
-  
-  // Process in optimized batches
   const BATCH_SIZE = 50;
   const CONCURRENT_CALCULATIONS = 5;
   
-  const products = offersSnapshot.docs;
+  let successCount = 0;
+  const errors: string[] = [];
   
   for (let i = 0; i < products.length; i += BATCH_SIZE) {
+    console.log(`[TSIN CALC] Processing batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(products.length / BATCH_SIZE)}`);
+    
     const batch = products.slice(i, i + BATCH_SIZE);
     const batchOperations: any[] = [];
     
@@ -295,14 +294,26 @@ export async function calculateAllProductsWithTsinServer(
           
           // Calculate metrics using TSIN-based approach
           const metrics = await calculateTsinBasedMetricsServer(integrationId, productData);
-          
-          // Prepare batch update
+            // Prepare batch update - Save metrics both in nested object AND root level for live data
           batchOperations.push({
             doc: productDoc.ref,
             data: {
+              // Root level fields for live data access
+              total_sold: metrics.totalSold,
+              total_return: metrics.totalReturn,
+              last_30_days_sold: metrics.last30DaysSold,
+              last_30_days_return: metrics.last30DaysReturn,
+              days_since_last_order: metrics.daysSinceLastOrder,
+              return_rate: metrics.returnRate,
+              quantity_required: metrics.qtyRequire,
+              product_status: metrics.productStatus,
+              avg_selling_price: metrics.avgSellingPrice,
+              
+              // Nested object for detailed metrics tracking
               tsinCalculatedMetrics: metrics,
               lastTsinCalculation: new Date(),
-              calculationMethod: 'TSIN-based'
+              calculationMethod: 'TSIN-based',
+              calculationVersion: '2.0-TSIN'
             }
           });
           
@@ -325,13 +336,14 @@ export async function calculateAllProductsWithTsinServer(
         const writeBatch = dbAdmin.batch();
         
         batchOperations.forEach(operation => {
+          console.log(`[TSIN CALC] Adding update for product: ${operation.data.total_sold} sold, ${operation.data.product_status} status`);
           writeBatch.update(operation.doc, operation.data);
         });
         
         await writeBatch.commit();
-        console.log(`Committed batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(products.length / BATCH_SIZE)} with ${batchOperations.length} updates`);
+        console.log(`[TSIN CALC] ✅ Successfully committed batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(products.length / BATCH_SIZE)} with ${batchOperations.length} updates`);
       } catch (commitError) {
-        console.error('Error committing batch:', commitError);
+        console.error('[TSIN CALC] ❌ Error committing batch:', commitError);
         errors.push(`Batch commit error: ${commitError}`);
       }
     }
@@ -342,7 +354,7 @@ export async function calculateAllProductsWithTsinServer(
     }
   }
   
-  console.log(`TSIN-based calculation complete. Success: ${successCount}, Errors: ${errors.length}`);
+  console.log(`[TSIN CALC] 🎉 TSIN-based calculation complete. Success: ${successCount}, Errors: ${errors.length}`);
   
   return { success: successCount, errors };
 }
