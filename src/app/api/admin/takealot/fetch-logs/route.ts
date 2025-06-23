@@ -15,8 +15,7 @@ export async function GET(request: NextRequest) {
     // Verify integration exists
     const integrationRef = db.collection('takealotIntegrations').doc(integrationId);
     const integrationSnap = await integrationRef.get();
-    
-    if (!integrationSnap.exists) {
+      if (!integrationSnap.exists) {
       return NextResponse.json({ error: 'Integration not found' }, { status: 404 });
     }
 

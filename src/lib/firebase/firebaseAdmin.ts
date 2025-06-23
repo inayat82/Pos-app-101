@@ -28,11 +28,18 @@ if (!admin.apps.length) {
       });
     } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
       console.log("Using Firebase service account credentials from file");
-      // Will automatically use the service account file
-    } else {
-      console.log("No Firebase Admin credentials found, using default application credentials (emulator mode)");
-      // For development, try to use default credentials or emulator
-      process.env.FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST || "localhost:8080";
+      // Will automatically use the service account file    } else {
+      console.log("No Firebase Admin credentials found, attempting to use default application credentials");
+      // IMPORTANT: Never set emulator host in production
+      // Explicitly check we're not setting emulator in production
+      if (process.env.NODE_ENV === 'development' && process.env.VERCEL !== '1') {
+        process.env.FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST || "localhost:8080";
+        console.log("Development mode: Using Firestore emulator");
+      } else {
+        // Ensure emulator host is NOT set in production
+        delete process.env.FIRESTORE_EMULATOR_HOST;
+        console.log("Production mode: Connecting to production Firestore");
+      }
     }
     
     // Initialize with configuration

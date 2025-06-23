@@ -11,8 +11,7 @@
     "pages/api/**/*.ts": {
       "maxDuration": 30
     }
-  },
-  "crons": [
+  },  "crons": [
     {
       "path": "/api/cron/takealot-robust-hourly",
       "schedule": "0 * * * *"
@@ -24,6 +23,10 @@
     {
       "path": "/api/cron/takealot-robust-weekly",
       "schedule": "0 3 * * 0"
+    },
+    {
+      "path": "/api/cron/calculate-product-metrics",
+      "schedule": "0 4 * * *"
     }
   ],
   "env": {
