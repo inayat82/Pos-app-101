@@ -5,11 +5,17 @@ import { calculateAllProductsWithTsinServer } from '@/lib/tsinBasedCalculationSe
 import { calculateAllProductMetricsServer } from '@/lib/productMetricsCalculatorServer';
 
 export async function POST(request: NextRequest) {
+  console.log('RECALCULATION API HIT');
   try {
+    const authToken = request.headers.get('authorization');
+    console.log('Auth Token:', authToken);
+
     const body = await request.json();
+    console.log('Request Body:', body);
     const { integrationId, useTsinCalculation } = body;
 
     if (!integrationId) {
+      console.error('Missing integrationId');
       return NextResponse.json(
         { error: 'Integration ID is required' },
         { status: 400 }
@@ -25,6 +31,7 @@ export async function POST(request: NextRequest) {
       result = await calculateAllProductsWithTsinServer(integrationId, (progress) => {
         console.log(`TSIN Progress: ${progress.processed}/${progress.total} (${Math.round(progress.processed/progress.total*100)}%) - Current: ${progress.currentProduct}`);
       });
+      console.log('TSIN-based calculation finished. Result:', result);
     } else {
       // Use legacy calculation method (fallback)
       console.log('Using legacy calculation method...');
@@ -36,8 +43,10 @@ export async function POST(request: NextRequest) {
           lastProgressUpdate = now;
         }
       });
+      console.log('Legacy calculation finished. Result:', result);
     }
 
+    console.log('Sending success response');
     return NextResponse.json({
       success: true,
       integrationId,
@@ -49,7 +58,7 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error) {
-    console.error('Recalculation failed:', error);
+    console.error('Recalculation failed spectacularly:', error);
     return NextResponse.json(
       { 
         error: 'Recalculation failed',

@@ -51,45 +51,54 @@ export async function calculateTsinBasedMetricsServer(
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(now.getDate() - 30);
 
-  // Use TSIN as primary identifier, fallback to SKU only if TSIN is missing
+  // Use TSIN as primary identifier. SKU fallback has been removed as it is unreliable.
   const tsinId = productData.tsin_id;
-  const sku = productData.sku || productData.product_label_number || 'N/A';
   const stockTotal = productData.stock_at_takealot_total || 0;
+  const stockOnWay = productData.total_stock_on_way || 0;
 
-  // Initialize metrics
-  let totalSold = 0;
-  let totalReturn = 0;
-  let last30DaysSold = 0;
-  let last30DaysReturn = 0;
-  let daysSinceLastOrder = 999;
-  let totalProductSoldAmount = 0;
+  // Initialize metrics as an object to be passed by reference
+  const metrics = {
+    totalSold: 0,
+    totalReturn: 0,
+    last30DaysSold: 0,
+    last30DaysReturn: 0,
+    daysSinceLastOrder: 999,
+    totalProductSoldAmount: 0,
+  };
 
   try {
     if (tsinId) {
       // Primary calculation using TSIN (most reliable)
-      await calculateMetricsByTsinServer(integrationId, tsinId, {
-        totalSold, totalReturn, last30DaysSold, last30DaysReturn, 
-        daysSinceLastOrder, totalProductSoldAmount
-      }, now, thirtyDaysAgo, productData.selling_price || 0);
-    } else if (sku && sku !== 'N/A') {
-      // Fallback to SKU calculation only if TSIN is missing
-      console.warn(`No TSIN found for product, using SKU fallback: ${sku}`);
-      await calculateMetricsBySkuServer(integrationId, sku, {
-        totalSold, totalReturn, last30DaysSold, last30DaysReturn, 
-        daysSinceLastOrder, totalProductSoldAmount
-      }, now, thirtyDaysAgo, productData.selling_price || 0);
+      await calculateMetricsByTsinServer(integrationId, tsinId, metrics, now, thirtyDaysAgo, productData.selling_price || 0);
+    } else {
+        // If no TSIN, we cannot calculate metrics reliably.
+        console.warn(`No TSIN found for product, skipping sales calculation. Product data:`, productData);
     }
   } catch (error) {
     console.warn(`Error calculating metrics for TSIN ${tsinId}:`, error);
   }
 
-  // Calculate derived metrics
-  const returnRate = totalSold > 0 ? (totalReturn * 100) / totalSold : 0;
-  const avgSellingPrice = totalSold > 0 ? totalProductSoldAmount / totalSold : (productData.selling_price || 0);
-  const qtyRequire = Math.max(0, last30DaysSold - stockTotal);
+  // Calculate derived metrics from the mutated metrics object
+  const returnRate = metrics.totalSold > 0 ? (metrics.totalReturn * 100) / metrics.totalSold : 0;
+  const avgSellingPrice = metrics.totalSold > 0 ? metrics.totalProductSoldAmount / metrics.totalSold : (productData.selling_price || 0);
+  const qtyRequire = Math.max(0, metrics.last30DaysSold - stockTotal - stockOnWay);
   
   // Determine product status
   const getProductStatus = (): 'Buyable' | 'Not Buyable' | 'Disable' => {
+    const lowerOfferStatus = (productData.status || '').toLowerCase();
+    
+    // Prioritize the status from the Takealot API response
+    if (lowerOfferStatus.includes('disabled by seller') || lowerOfferStatus.includes('disabled by takealot') || lowerOfferStatus.includes('disable')) {
+      return 'Disable';
+    }
+    if (lowerOfferStatus.includes('not buyable')) {
+      return 'Not Buyable';
+    }
+    if (lowerOfferStatus.includes('buyable')) {
+      return 'Buyable';
+    }
+    
+    // Fallback to stock-based logic if the API status isn't clear
     if (stockTotal === 0) return 'Disable';
     if (stockTotal < 5) return 'Not Buyable';
     return 'Buyable';
@@ -97,16 +106,16 @@ export async function calculateTsinBasedMetricsServer(
 
   return {
     avgSellingPrice: Math.round(avgSellingPrice * 100) / 100,
-    totalSold,
-    totalReturn,
-    last30DaysSold,
-    last30DaysReturn,
-    daysSinceLastOrder: daysSinceLastOrder === 999 ? 999 : daysSinceLastOrder,
+    totalSold: metrics.totalSold,
+    totalReturn: metrics.totalReturn,
+    last30DaysSold: metrics.last30DaysSold,
+    last30DaysReturn: metrics.last30DaysReturn,
+    daysSinceLastOrder: metrics.daysSinceLastOrder === 999 ? 999 : metrics.daysSinceLastOrder,
     returnRate: Math.round(returnRate * 100) / 100,
     qtyRequire,
     productStatus: getProductStatus(),
     lastCalculated: now,
-    calculationVersion: '2.0-TSIN'
+    calculationVersion: '2.6-sku-fallback-removed'
   };
 }
 
@@ -147,48 +156,13 @@ async function calculateMetricsByTsinServer(
             processSaleRecordServer(sale, metrics, now, thirtyDaysAgo, defaultPrice);
           });
           
-          break; // Found data, move to next collection
+          return; // Data found and processed, exit the function.
         }
       }
     } catch (error) {
-      console.warn(`Could not query collection ${collectionName} for TSIN:`, error);
-    }
-  }
-}
-
-/**
- * Calculate metrics using SKU (FALLBACK METHOD) - SERVER-SIDE
- */
-async function calculateMetricsBySkuServer(
-  integrationId: string,
-  sku: string,
-  metrics: any,
-  now: Date,
-  thirtyDaysAgo: Date,
-  defaultPrice: number
-) {
-  const salesCollections = ['takealot_sales']; // Use only the correct Takealot API data collection
-  
-  for (const collectionName of salesCollections) {
-    try {
-      const skuQuery = dbAdmin.collection(collectionName)
-        .where('integrationId', '==', integrationId)
-        .where('sku', '==', sku);
-      
-      const salesSnapshot = await skuQuery.get();
-      
-      if (salesSnapshot.size > 0) {
-        console.log(`Found ${salesSnapshot.size} sales records for SKU ${sku} in ${collectionName}`);
-        
-        salesSnapshot.forEach(saleDoc => {
-          const sale = saleDoc.data();
-          processSaleRecordServer(sale, metrics, now, thirtyDaysAgo, defaultPrice);
-        });
-        
-        break; // Found data, move to next collection
-      }
-    } catch (error) {
-      console.warn(`Could not query collection ${collectionName} for SKU:`, error);
+      console.error(`[TSIN CALC DEBUG] FATAL: Error querying ${collectionName} for TSIN ${tsinId}:`, error);
+      // Re-throw the error to be caught by the main batch processor
+      throw new Error(`Firestore query failed for TSIN ${tsinId} in ${collectionName}`);
     }
   }
 }
@@ -196,7 +170,7 @@ async function calculateMetricsBySkuServer(
 /**
  * Process individual sale record and update metrics - SERVER-SIDE
  */
-function processSaleRecordServer(
+export function processSaleRecordServer(
   sale: SalesData,
   metrics: any,
   now: Date,
@@ -204,23 +178,28 @@ function processSaleRecordServer(
   defaultPrice: number
 ) {
   const quantity = sale.quantity || sale.quantity_sold || sale.units_sold || 1;
-  const orderDate = sale.order_date || sale.sale_date;
+  const orderDate = sale.order_date || sale.sale_date || sale.created_at;
   const salePrice = sale.selling_price || sale.price || defaultPrice;
   
   if (orderDate) {
-    const saleDate = new Date(orderDate);
+    // Robust date handling for both string and Firestore Timestamp
+    const saleDate = (orderDate.toDate && typeof orderDate.toDate === 'function')
+      ? orderDate.toDate()
+      : new Date(orderDate);
+
     if (!isNaN(saleDate.getTime())) {
-      // Calculate days since last order
+      // Calculate days since last order, only if the sale is not in the future
       const daysDiff = Math.floor((now.getTime() - saleDate.getTime()) / (1000 * 60 * 60 * 24));
-      if (daysDiff < metrics.daysSinceLastOrder) {
+      if (daysDiff >= 0 && daysDiff < metrics.daysSinceLastOrder) {
         metrics.daysSinceLastOrder = daysDiff;
       }
       
-      // Check if it's a return
-      const isReturn = sale.is_return || 
-                     sale.return_status || 
+      // Expanded check for returns, including looking at the general 'status' field
+      const isReturn = sale.is_return === true || 
+                     (sale.return_status && sale.return_status.length > 0) || 
                      (sale.order_status && sale.order_status.toLowerCase().includes('return')) ||
-                     quantity < 0;
+                     (sale.status && sale.status.toLowerCase().includes('return')) ||
+                     (quantity < 0);
       
       if (isReturn) {
         const returnQty = Math.abs(quantity);
@@ -247,114 +226,95 @@ export async function calculateAllProductsWithTsinServer(
   integrationId: string,
   onProgress?: (progress: { processed: number; total: number; currentProduct: string }) => void
 ): Promise<{ success: number; errors: string[] }> {
-  console.log(`[TSIN CALC] Starting TSIN-based calculation for integration: ${integrationId}`);
+  console.log(`[TSIN CALC DEBUG] Service invoked for integration: ${integrationId}`);
   
-  // Get all products for this integration using Firebase Admin
-  const offersQuery = dbAdmin.collection('takealot_offers')
-    .where('integrationId', '==', integrationId);
-    const offersSnapshot = await offersQuery.get();
-  const products = offersSnapshot.docs; // Get the actual documents
+  let offersSnapshot;
+  try {
+    const offersQuery = dbAdmin.collection('takealot_offers')
+      .where('integrationId', '==', integrationId);
+    offersSnapshot = await offersQuery.get();
+    console.log(`[TSIN CALC DEBUG] Successfully fetched ${offersSnapshot.docs.length} products from Firestore.`);
+  } catch (error) {
+    console.error('[TSIN CALC DEBUG] FATAL: Could not fetch products from Firestore.', error);
+    throw new Error('Failed to fetch products. Check Firestore permissions and query.');
+  }
+  
+  const products = offersSnapshot.docs;
   const totalProducts = products.length;
   
   if (totalProducts === 0) {
-    throw new Error('No products found for this integration');
+    console.warn(`[TSIN CALC DEBUG] No products found for integration ${integrationId}. Aborting.`);
+    // Return success with 0 processed instead of throwing an error
+    return { success: 0, errors: ['No products found for this integration'] };
   }
 
-  console.log(`Found ${totalProducts} products to process with TSIN-based calculations`);
+  console.log(`[TSIN CALC DEBUG] Found ${totalProducts} products to process.`);
   
   const BATCH_SIZE = 50;
-  const CONCURRENT_CALCULATIONS = 5;
-  
   let successCount = 0;
   const errors: string[] = [];
   
   for (let i = 0; i < products.length; i += BATCH_SIZE) {
-    console.log(`[TSIN CALC] Processing batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(products.length / BATCH_SIZE)}`);
-    
     const batch = products.slice(i, i + BATCH_SIZE);
     const batchOperations: any[] = [];
     
-    // Process products in parallel within each batch
-    for (let j = 0; j < batch.length; j += CONCURRENT_CALCULATIONS) {
-      const concurrentBatch = batch.slice(j, j + CONCURRENT_CALCULATIONS);
-      
-      const concurrentPromises = concurrentBatch.map(async (productDoc) => {
-        try {
-          const productData = productDoc.data();
-          const identifier = productData.tsin_id || productData.sku || 'Unknown';
-          
-          // Report progress
-          if (onProgress) {
-            onProgress({
-              processed: i + j + concurrentBatch.indexOf(productDoc),
-              total: totalProducts,
-              currentProduct: identifier
-            });
+    const calculationPromises = batch.map(async (productDoc) => {
+      try {
+        const productData = productDoc.data();
+        const metrics = await calculateTsinBasedMetricsServer(integrationId, productData);
+        
+        batchOperations.push({
+          doc: productDoc.ref,
+          data: {
+            total_sold: metrics.totalSold,
+            total_return: metrics.totalReturn,
+            last_30_days_sold: metrics.last30DaysSold,
+            last_30_days_return: metrics.last30DaysReturn,
+            days_since_last_order: metrics.daysSinceLastOrder,
+            return_rate: metrics.returnRate,
+            quantity_required: metrics.qtyRequire,
+            product_status: metrics.productStatus,
+            avg_selling_price: metrics.avgSellingPrice,
+            tsinCalculatedMetrics: metrics,
+            lastTsinCalculation: new Date(),
+            calculationMethod: 'TSIN-based',
+            calculationVersion: '2.6-sku-fallback-removed'
           }
-          
-          // Calculate metrics using TSIN-based approach
-          const metrics = await calculateTsinBasedMetricsServer(integrationId, productData);
-            // Prepare batch update - Save metrics both in nested object AND root level for live data
-          batchOperations.push({
-            doc: productDoc.ref,
-            data: {
-              // Root level fields for live data access
-              total_sold: metrics.totalSold,
-              total_return: metrics.totalReturn,
-              last_30_days_sold: metrics.last30DaysSold,
-              last_30_days_return: metrics.last30DaysReturn,
-              days_since_last_order: metrics.daysSinceLastOrder,
-              return_rate: metrics.returnRate,
-              quantity_required: metrics.qtyRequire,
-              product_status: metrics.productStatus,
-              avg_selling_price: metrics.avgSellingPrice,
-              
-              // Nested object for detailed metrics tracking
-              tsinCalculatedMetrics: metrics,
-              lastTsinCalculation: new Date(),
-              calculationMethod: 'TSIN-based',
-              calculationVersion: '2.0-TSIN'
-            }
-          });
-          
-          return { success: true, id: productDoc.id };
-        } catch (error) {
-          const errorMsg = `Error processing product ${productDoc.id}: ${error}`;
-          errors.push(errorMsg);
-          console.error(errorMsg);
-          return { success: false, id: productDoc.id };
-        }
-      });
+        });
+        return { success: true };
+      } catch (error) {
+        const errorMsg = `Error processing product ${productDoc.id}: ${error}`;
+        errors.push(errorMsg);
+        console.error(`[TSIN CALC DEBUG] ${errorMsg}`);
+        return { success: false };
+      }
+    });
       
-      const batchResults = await Promise.all(concurrentPromises);
-      successCount += batchResults.filter(r => r.success).length;
-    }
+    const results = await Promise.all(calculationPromises);
+    successCount += results.filter(r => r.success).length;
     
-    // Commit the batch using Firebase Admin
     if (batchOperations.length > 0) {
       try {
         const writeBatch = dbAdmin.batch();
-        
-        batchOperations.forEach(operation => {
-          console.log(`[TSIN CALC] Adding update for product: ${operation.data.total_sold} sold, ${operation.data.product_status} status`);
-          writeBatch.update(operation.doc, operation.data);
-        });
-        
+        batchOperations.forEach(op => writeBatch.update(op.doc, op.data));
         await writeBatch.commit();
-        console.log(`[TSIN CALC] ✅ Successfully committed batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(products.length / BATCH_SIZE)} with ${batchOperations.length} updates`);
+        console.log(`[TSIN CALC DEBUG] Successfully committed batch with ${batchOperations.length} updates.`);
       } catch (commitError) {
-        console.error('[TSIN CALC] ❌ Error committing batch:', commitError);
+        console.error('[TSIN CALC DEBUG] FATAL: Error committing batch:', commitError);
         errors.push(`Batch commit error: ${commitError}`);
       }
     }
     
-    // Small delay between batches
-    if (i + BATCH_SIZE < products.length) {
-      await new Promise(resolve => setTimeout(resolve, 200));
+    if (onProgress) {
+        onProgress({
+            processed: Math.min(i + BATCH_SIZE, totalProducts),
+            total: totalProducts,
+            currentProduct: 'Batch complete'
+        });
     }
   }
   
-  console.log(`[TSIN CALC] 🎉 TSIN-based calculation complete. Success: ${successCount}, Errors: ${errors.length}`);
+  console.log(`[TSIN CALC DEBUG] Calculation complete. Success: ${successCount}, Errors: ${errors.length}`);
   
   return { success: successCount, errors };
 }
