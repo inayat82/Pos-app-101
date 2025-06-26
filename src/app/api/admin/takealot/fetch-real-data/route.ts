@@ -81,8 +81,8 @@ async function performRealDataFetch(
   let totalPages = 1;
   let currentPage = 1;
   let hasMore = true;
-  let allFetchedData: any[] = [];
-  let responseTimes: number[] = [];
+  const allFetchedData: any[] = [];
+  const responseTimes: number[] = [];
   let lastApiResponse = '';
 
   const updateProgress = (message: string, completed = false, extraData?: any) => {
@@ -251,7 +251,7 @@ async function buildApiUrl(
   dateRange?: string
 ): Promise<string> {
   const endpoint = type === 'offers' ? '/v2/offers' : '/V2/sales';
-  let url = `${TAKEALOT_API_BASE}${endpoint}`;
+  const url = `${TAKEALOT_API_BASE}${endpoint}`;
   
   const params = new URLSearchParams();
   params.append('page_size', pageSize.toString());

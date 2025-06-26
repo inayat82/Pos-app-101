@@ -46,7 +46,7 @@ export async function calculateProductSalesMetrics(
 
     // Try to get sales data from multiple collections
     const salesCollections = ['takealot_sales']; // Use only the correct Takealot API data collection
-    let allSalesData: SalesData[] = [];
+    const allSalesData: SalesData[] = [];
 
     for (const collectionName of salesCollections) {
       try {
@@ -211,7 +211,7 @@ function isReturnedSale(sale: SalesData): boolean {
  */
 function getSaleDateFromRecord(sale: SalesData): Date | null {
   // Try different date fields
-  let dateString = sale.order_date || sale.sale_date;
+  const dateString = sale.order_date || sale.sale_date;
   
   if (dateString) {
     const date = new Date(dateString);

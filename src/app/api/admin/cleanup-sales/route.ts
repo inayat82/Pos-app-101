@@ -57,7 +57,7 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    let docsToDelete = [];
+    const docsToDelete = [];
 
     if (action === 'deleteAll') {
       // Delete ALL sales for this integration

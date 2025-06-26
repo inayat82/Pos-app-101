@@ -124,7 +124,7 @@ export async function POST(request: NextRequest) {
         };        if (existingRecords.has(uniqueId)) {
           // Update existing record
           const existingRecord = existingRecords.get(uniqueId);
-          let updateData: any = { 
+          const updateData: any = { 
             lastUpdated: serverTimestamp()
           };
 

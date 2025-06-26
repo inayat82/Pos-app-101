@@ -1,12 +1,12 @@
 'use client';
 
-import { useState, useContext, useEffect } from 'react'; // Added useEffect
+import { useState, useContext, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { AuthContext, AuthContextType } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
-import { db } from '@/lib/firebase/firebase'; // Added for Firestore
-import { collection, query, where, getDocs, orderBy } from 'firebase/firestore'; // Added for Firestore
+import { db } from '@/lib/firebase/firebase';
+import { collection, query, where, getDocs } from 'firebase/firestore';
 import {
   HomeIcon,
   ArchiveBoxIcon,
@@ -15,16 +15,15 @@ import {
   UsersIcon,
   Squares2X2Icon,
   UserIcon,
-  BanknotesIcon,  ClipboardDocumentListIcon,
+  BanknotesIcon,
+  ClipboardDocumentListIcon,
   ExclamationTriangleIcon,
-  CheckCircleIcon,
   BuildingStorefrontIcon,
   ChevronRightIcon,
   ArrowLeftOnRectangleIcon,
   CogIcon,
   CircleStackIcon,
   LinkIcon,
-  PlusCircleIcon,
   DocumentTextIcon,
   AdjustmentsHorizontalIcon,
 } from '@heroicons/react/24/outline';
@@ -43,9 +42,8 @@ function classNames(...classes: string[]) {
 }
 
 const AdminSidebar: React.FC = () => {
-  const [takealotOpen, setTakealotOpen] = useState(false);
-  const [posProductOpen, setPosProductOpenState] = useState(false);  const [purchaseSystemOpen, setPurchaseSystemOpenState] = useState(false);
-  const [takealotIntegrationOpen, setTakealotIntegrationOpenState] = useState(false);
+  const [posProductOpen, setPosProductOpenState] = useState(false);
+  const [purchaseSystemOpen, setPurchaseSystemOpenState] = useState(false);
   const [administrationOpen, setAdministrationOpenState] = useState(false);
   
   // State for dynamic Takealot integrations
@@ -114,10 +112,10 @@ const AdminSidebar: React.FC = () => {
         await logout();
         router.push('/auth/login'); 
       } catch (error) {
+        console.error('Logout error:', error);
       }
     }
   };
-  const menuCategoryTitleClass = "px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wider";
   
   // New divider component with centered title and lines
   const dividerWithTitle = (title: string) => (
@@ -158,6 +156,7 @@ const AdminSidebar: React.FC = () => {
   const administrationLinks = [
     { name: 'Manage Users', href: '/admin/manage-users', icon: UsersIcon },
     { name: 'Manage Integrations', href: '/admin/integration', icon: LinkIcon }, // Updated href to point to the folder
+    // Logs removed due to excessive Firebase writes causing performance issues
     // Add other admin-level settings/links here if needed
   ];  const posProductLinks = [
     { name: 'Product', href: '/admin/pos/product', icon: ArchiveBoxIcon },

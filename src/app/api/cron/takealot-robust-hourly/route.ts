@@ -36,16 +36,17 @@ export async function GET(request: NextRequest) {
 
     console.log('[Cron] Starting robust hourly Takealot sync');
 
-    // Get all active integrations
+    // Get all active integrations with product cron enabled
     const integrationsSnapshot = await db.collection('takealotIntegrations')
       .where('cronEnabled', '==', true)
+      .where('productCronEnabled', '==', true)
       .get();
 
     if (integrationsSnapshot.empty) {
-      console.log('[Cron] No enabled integrations found');
+      console.log('[Cron] No enabled product integrations found');
       return NextResponse.json({ 
         success: true, 
-        message: 'No enabled integrations found',
+        message: 'No enabled product integrations found',
         processed: 0
       });
     }
@@ -63,25 +64,93 @@ export async function GET(request: NextRequest) {
         const integrationId = integrationDoc.id;
 
         try {
-          // For hourly sync, only sync sales data with limited pages
-          const result = await retrieveTakealotDataWithDuplicateManagement({
-            adminId: integrationData.adminId,
-            apiKey: integrationData.apiKey,
-            dataType: 'sales',
-            maxPagesToFetch: 5, // Limit to 5 pages for hourly sync
-            batchSize: 100,
-            enableDuplicateCheck: true,
-            updateExistingRecords: true
-          });
+          // Check sync preferences to determine if any strategy with "Every 1 hr" is enabled
+          const syncPrefsRef = db
+            .collection(`admins/${integrationData.adminId}/takealotIntegrations/${integrationId}/syncPreferences`)
+            .doc('preferences');
+          
+          const syncPrefsSnap = await syncPrefsRef.get();
+          
+          let shouldSyncSales = false;
+          let shouldSyncProducts = false;
+          
+          if (syncPrefsSnap.exists) {
+            const prefs = syncPrefsSnap.data();
+            const salesStrategies = prefs?.salesStrategies || [];
+            const productStrategies = prefs?.productStrategies || [];
+            
+            // Check for sales strategies with "Every 1 hr" cron label (30 days sales)
+            shouldSyncSales = salesStrategies.some((s: any) => 
+              s.cronEnabled === true && s.cronLabel === 'Every 1 hr'
+            );
+            
+            // Check for product strategies with "Every 1 hr" cron label (all products)
+            shouldSyncProducts = productStrategies.some((p: any) => 
+              p.cronEnabled === true && p.cronLabel === 'Every 1 hr'
+            );
+          }
+
+          if (!shouldSyncSales && !shouldSyncProducts) {
+            console.log(`[Cron] Skipping integration ${integrationId} - no hourly strategies enabled`);
+            return {
+              integrationId,
+              adminId: integrationData.adminId,
+              success: true,
+              message: 'No hourly strategies enabled',
+              skipped: true
+            };
+          }
+
+          const results = [];
+
+          // Sync sales if enabled (Last 30 days)
+          if (shouldSyncSales) {
+            console.log(`[Cron] Syncing last 30 days sales for integration ${integrationId}`);
+            const salesResult = await retrieveTakealotDataWithDuplicateManagement({
+              adminId: integrationData.adminId,
+              apiKey: integrationData.apiKey,
+              dataType: 'sales',
+              maxPagesToFetch: 30, // 30 days worth of data
+              batchSize: 100,
+              enableDuplicateCheck: true,
+              updateExistingRecords: true
+            });
+            results.push({ type: 'sales', ...salesResult });
+          }
+
+          // Sync products if enabled (All products)
+          if (shouldSyncProducts) {
+            console.log(`[Cron] Syncing all products for integration ${integrationId}`);
+            const productsResult = await retrieveTakealotDataWithDuplicateManagement({
+              adminId: integrationData.adminId,
+              apiKey: integrationData.apiKey,
+              dataType: 'products',
+              maxPagesToFetch: undefined, // All products
+              batchSize: 100,
+              enableDuplicateCheck: true,
+              updateExistingRecords: true
+            });
+            results.push({ type: 'products', ...productsResult });
+          }
 
           // Update last sync timestamp
           await db.collection('takealotIntegrations').doc(integrationId).update({
             lastRobustSync: admin.firestore.Timestamp.now(),
             lastRobustSync_hourly: admin.firestore.Timestamp.now()
-          });          return {
+          });
+
+          // Aggregate results
+          const totalNewRecords = results.reduce((sum, r) => sum + (r.newRecordsAdded || 0), 0);
+          const totalDuplicates = results.reduce((sum, r) => sum + (r.duplicatesFound || 0), 0);
+
+          return {
             integrationId,
             adminId: integrationData.adminId,
-            ...result
+            success: true,
+            message: `Hourly sync completed: ${results.length} data types synced`,
+            newRecordsAdded: totalNewRecords,
+            duplicatesFound: totalDuplicates,
+            syncTasks: results
           };
 
         } catch (error: any) {

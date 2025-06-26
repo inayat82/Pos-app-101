@@ -313,7 +313,7 @@ export async function POST(request: NextRequest) {
                 // Record exists - check if update is needed
                 const existing = existingRecord.data;
                 let needsUpdate = false;
-                let updateFields: any = {
+                const updateFields: any = {
                   lastUpdated: now,
                   fetchedAt: now,
                   dbUpdated: now

@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { AuthProvider } from "@/context/AuthContext";
 import GlobalErrorAlert from "@/components/GlobalErrorAlert";
+import LogRecorderInitializer from "@/components/LogRecorderInitializer";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -22,10 +23,12 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={inter.className}>
-        <AuthProvider>
-          <GlobalErrorAlert />
-          {children}
-        </AuthProvider>
+        <LogRecorderInitializer>
+          <AuthProvider>
+            <GlobalErrorAlert />
+            {children}
+          </AuthProvider>
+        </LogRecorderInitializer>
       </body>
     </html>
   );

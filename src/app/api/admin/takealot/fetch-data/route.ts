@@ -115,7 +115,7 @@ async function performDataFetch(
   options: FetchOptions
 ) {
   let totalProcessed = 0;
-  let totalSkipped = 0;
+  const totalSkipped = 0;
   let totalErrors = 0;
   let currentPage = 1;
   let hasMore = true;

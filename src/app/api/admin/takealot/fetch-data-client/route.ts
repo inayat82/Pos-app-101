@@ -77,7 +77,7 @@ async function performClientDataFetch(
   let totalErrors = 0;
   let currentPage = 1;
   let hasMore = true;
-  let fetchedData: any[] = [];
+  const fetchedData: any[] = [];
 
   const updateProgress = (message: string, completed = false) => {
     const progressData = {

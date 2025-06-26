@@ -19,7 +19,7 @@ interface TsinProductMetrics {
 interface SalesData {
   tsin_id?: string;
   tsin?: string;
-  sku?: string;
+  sku?: string; // For display only - NOT used for calculations or matching
   quantity?: number;
   quantity_sold?: number;
   units_sold?: number;
@@ -51,8 +51,9 @@ export async function calculateTsinBasedMetricsServer(
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(now.getDate() - 30);
 
-  // Use TSIN as primary identifier. SKU fallback has been removed as it is unreliable.
+  // Use TSIN as primary identifier. SKU kept for display only, not for calculations.
   const tsinId = productData.tsin_id;
+  const sku = productData.sku || productData.product_label_number || null; // For display only
   const stockTotal = productData.stock_at_takealot_total || 0;
   const stockOnWay = productData.total_stock_on_way || 0;
 

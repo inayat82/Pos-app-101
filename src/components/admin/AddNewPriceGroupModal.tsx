@@ -9,11 +9,13 @@ interface AddNewPriceGroupModalProps {
 }
 
 const AddNewPriceGroupModal: React.FC<AddNewPriceGroupModalProps> = ({ isOpen, onClose, onSave }) => {
-  if (!isOpen) return null;
-
+  // All hooks must be called at the top level
   const [groupName, setGroupName] = useState('');
   const [description, setDescription] = useState('');
   const [discountPercentage, setDiscountPercentage] = useState('');
+
+  // Early return after hooks
+  if (!isOpen) return null;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

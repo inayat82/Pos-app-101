@@ -10,6 +10,9 @@
     },
     "pages/api/**/*.ts": {
       "maxDuration": 30
+    },
+    "app/api/cron/**/*.ts": {
+      "maxDuration": 300
     }
   },  "crons": [
     {
@@ -17,12 +20,16 @@
       "schedule": "0 * * * *"
     },
     {
-      "path": "/api/cron/takealot-robust-daily",
-      "schedule": "0 2 * * *"
+      "path": "/api/cron/takealot-paginated-daily",
+      "schedule": "0 */2 * * *"
     },
     {
-      "path": "/api/cron/takealot-robust-weekly",
-      "schedule": "0 3 * * 0"
+      "path": "/api/cron/takealot-paginated-weekly",
+      "schedule": "0 */4 * * *"
+    },
+    {
+      "path": "/api/cron/takealot-6month-sales",
+      "schedule": "0 */6 * * *"
     },
     {
       "path": "/api/cron/calculate-product-metrics",

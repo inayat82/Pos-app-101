@@ -17,13 +17,15 @@ interface Product {
 }
 
 const RecordNewSaleModal: React.FC<RecordNewSaleModalProps> = ({ isOpen, onClose, onCompleteSale }) => {
-  if (!isOpen) return null;
-
+  // All hooks must be called at the top level
   const [customer, setCustomer] = useState('Walk-in Customer');
   const [paymentMethod, setPaymentMethod] = useState('Cash');
   const [searchTerm, setSearchTerm] = useState('');
   const [addedProducts, setAddedProducts] = useState<Product[]>([]);
   const [notes, setNotes] = useState('');
+
+  // Early return after hooks
+  if (!isOpen) return null;
 
   // Dummy product search results - replace with actual search logic
   const dummyProducts: Product[] = [

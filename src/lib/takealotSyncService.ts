@@ -52,7 +52,7 @@ interface FetchProgressState {
   overallMessage: string | null;
 }
 
-async function fetchAndSaveTakealotData(
+export async function fetchAndSaveTakealotData(
   baseEndpoint: string,
   apiKey: string,
   adminId: string,
@@ -195,7 +195,7 @@ async function fetchAndSaveTakealotData(
     try {
       const collectionName = dataType === 'products' ? 'takealot_offers' : 'takealot_sales';
       let savedCount = 0;
-      let updatedCount = 0;
+      const updatedCount = 0;
       let errorCount = 0;
 
       // Use batch operations for better performance
@@ -215,11 +215,30 @@ async function fetchAndSaveTakealotData(
               // For sales, use order_id as unique identifier
               docId = item.order_id || item.sale_id || `${adminId}_${i}_${Date.now()}`;
               documentData = {
-                ...item,
+                // Core sales fields - explicitly mapped for reliability
+                order_id: item.order_id,
+                sale_id: item.sale_id,
+                tsin_id: item.tsin_id,
+                tsin: item.tsin,
+                sku: item.sku || item.product_label_number || null,
+                product_title: item.product_title || item.title,
+                brand: item.brand,
+                quantity: item.quantity || item.quantity_sold || item.units_sold || 0,
+                selling_price: item.selling_price || item.price || 0,
+                commission: item.commission || 0,
+                order_date: item.order_date || item.sale_date,
+                order_status: item.order_status || item.status,
+                return_status: item.return_status,
+                is_return: item.is_return || false,
+                customer_city: item.customer_city,
+                payment_method: item.payment_method,
+                // Metadata
                 integrationId: adminId,
                 fetchedAt: Timestamp.now(),
                 lastUpdated: Timestamp.now(),
-                unique_id: docId
+                unique_id: docId,
+                // Keep all original fields for reference
+                originalData: item
               };
               
               // Check if this is the first time we're seeing this record
@@ -227,14 +246,43 @@ async function fetchAndSaveTakealotData(
                 documentData.firstFetchedAt = Timestamp.now();
               }
             } else {
-              // For products, use TSIN or SKU as unique identifier
-              docId = item.tsin_id || item.sku || item.offer_id || `${adminId}_${i}_${Date.now()}`;
+              // For products, use TSIN as unique identifier (SKU kept for display only, not as unique field)
+              if (!item.tsin_id) {
+                console.warn(`[takealotSyncService] Product missing TSIN ID, skipping item:`, item);
+                errorCount++;
+                continue;
+              }
+              
+              docId = item.tsin_id;
               documentData = {
-                ...item,
+                // Core product fields - explicitly mapped for reliability
+                tsin_id: item.tsin_id,
+                tsin: item.tsin,
+                sku: item.sku || item.product_label_number || null,
+                product_title: item.product_title || item.title,
+                brand: item.brand,
+                category: item.category,
+                subcategory: item.subcategory,
+                selling_price: item.selling_price || item.price || 0,
+                cost_price: item.cost_price || 0,
+                recommended_retail_price: item.recommended_retail_price || 0,
+                stock_at_takealot_total: item.stock_at_takealot_total || 0,
+                total_stock_on_way: item.total_stock_on_way || 0,
+                status: item.status,
+                is_active: item.is_active !== false, // Default to true unless explicitly false
+                offer_id: item.offer_id,
+                lead_time: item.lead_time || 0,
+                weight: item.weight || 0,
+                dimensions: item.dimensions,
+                images: item.images || [],
+                description: item.description,
+                // Metadata
                 integrationId: adminId,
                 fetchedAt: Timestamp.now(),
                 lastUpdated: Timestamp.now(),
-                unique_id: docId
+                unique_id: docId,
+                // Keep all original fields for reference
+                originalData: item
               };
               
               if (!item.firstFetchedAt) {

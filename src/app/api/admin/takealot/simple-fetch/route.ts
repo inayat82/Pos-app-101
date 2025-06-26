@@ -115,9 +115,9 @@ export async function POST(request: NextRequest) {
             log: `Starting ${options.type} fetch - ${maxPages} pages to process`
           })}\n\n`));
 
-          let allRecords = [];
+          const allRecords = [];
           let totalProcessed = 0;
-          let totalSkipped = 0;
+          const totalSkipped = 0;
           let totalErrors = 0;
 
           // Fetch pages in batches

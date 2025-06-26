@@ -13,7 +13,7 @@ if (!admin.apps.length) {
     const privateKey = process.env.FIREBASE_PRIVATE_KEY;
     const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
     
-    let initConfig: any = {
+    const initConfig: any = {
       projectId: projectId,
       storageBucket: `${projectId}.firebasestorage.app`,
     };
@@ -31,12 +31,12 @@ if (!admin.apps.length) {
       // Will automatically use the service account file    } else {
       console.log("No Firebase Admin credentials found, attempting to use default application credentials");
       // IMPORTANT: Never set emulator host in production
-      // Explicitly check we're not setting emulator in production
-      if (process.env.NODE_ENV === 'development' && process.env.VERCEL !== '1') {
+      // Only use emulator if explicitly enabled via environment variable
+      if (process.env.USE_FIRESTORE_EMULATOR === 'true' && process.env.NODE_ENV === 'development' && process.env.VERCEL !== '1') {
         process.env.FIRESTORE_EMULATOR_HOST = process.env.FIRESTORE_EMULATOR_HOST || "localhost:8080";
-        console.log("Development mode: Using Firestore emulator");
+        console.log("Development mode: Using Firestore emulator (explicitly enabled)");
       } else {
-        // Ensure emulator host is NOT set in production
+        // Ensure emulator host is NOT set by default
         delete process.env.FIRESTORE_EMULATOR_HOST;
         console.log("Production mode: Connecting to production Firestore");
       }

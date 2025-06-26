@@ -15,12 +15,19 @@ interface TsinProductMetrics {
   productStatus: 'Buyable' | 'Not Buyable' | 'Disable';
   lastCalculated: Date;
   calculationVersion: string;
+  // Display fields (for UI purposes only, not used in calculations)
+  tsinId?: string;
+  sku?: string | null;
+  displayInfo?: {
+    productName: string;
+    brand: string;
+  };
 }
 
 interface SalesData {
   tsin_id?: string;
   tsin?: string;
-  sku?: string;
+  sku?: string; // For display only - NOT used for calculations or matching
   quantity?: number;
   quantity_sold?: number;
   units_sold?: number;
@@ -52,9 +59,9 @@ export async function calculateTsinBasedMetrics(
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(now.getDate() - 30);
 
-  // Use TSIN as primary identifier, fallback to SKU only if TSIN is missing
+  // Use TSIN as primary and only identifier for calculations (SKU kept for display only)
   const tsinId = productData.tsin_id;
-  const sku = productData.sku || productData.product_label_number || 'N/A';
+  const sku = productData.sku || productData.product_label_number || 'N/A'; // For display only
   const stockTotal = productData.stock_at_takealot_total || 0;
 
   // Initialize metrics
@@ -68,17 +75,24 @@ export async function calculateTsinBasedMetrics(
   try {
     if (tsinId) {
       // Primary calculation using TSIN (most reliable)
-      await calculateMetricsByTsin(integrationId, tsinId, {
+      const metricsRef = {
         totalSold, totalReturn, last30DaysSold, last30DaysReturn, 
         daysSinceLastOrder, totalProductSoldAmount
-      }, now, thirtyDaysAgo, productData.selling_price || 0);
-    } else if (sku && sku !== 'N/A') {
-      // Fallback to SKU calculation only if TSIN is missing
-      console.warn(`No TSIN found for product, using SKU fallback: ${sku}`);
-      await calculateMetricsBySku(integrationId, sku, {
-        totalSold, totalReturn, last30DaysSold, last30DaysReturn, 
-        daysSinceLastOrder, totalProductSoldAmount
-      }, now, thirtyDaysAgo, productData.selling_price || 0);
+      };
+      
+      await calculateMetricsByTsin(integrationId, tsinId, metricsRef, now, thirtyDaysAgo, productData.selling_price || 0);
+      
+      // Extract updated values
+      totalSold = metricsRef.totalSold;
+      totalReturn = metricsRef.totalReturn;
+      last30DaysSold = metricsRef.last30DaysSold;
+      last30DaysReturn = metricsRef.last30DaysReturn;
+      daysSinceLastOrder = metricsRef.daysSinceLastOrder;
+      totalProductSoldAmount = metricsRef.totalProductSoldAmount;
+    } else {
+      // No TSIN available - cannot calculate metrics reliably
+      console.warn(`No TSIN found for product, skipping metrics calculation:`, productData);
+      throw new Error('Product missing TSIN ID - cannot calculate metrics reliably');
     }
   } catch (error) {
     console.warn(`Error calculating metrics for TSIN ${tsinId}:`, error);
@@ -97,6 +111,7 @@ export async function calculateTsinBasedMetrics(
   };
 
   return {
+    // Core metrics (calculated using TSIN only)
     avgSellingPrice: Math.round(avgSellingPrice * 100) / 100,
     totalSold,
     totalReturn,
@@ -107,7 +122,14 @@ export async function calculateTsinBasedMetrics(
     qtyRequire,
     productStatus: getProductStatus(),
     lastCalculated: now,
-    calculationVersion: '2.0-TSIN'
+    calculationVersion: '2.1-TSIN-ONLY',
+    // Display information (SKU kept for UI display only)
+    tsinId,
+    sku: sku !== 'N/A' ? sku : null,
+    displayInfo: {
+      productName: productData.product_title || productData.title || 'Unknown Product',
+      brand: productData.brand || 'Unknown Brand'
+    }
   };
 }
 
@@ -156,45 +178,6 @@ async function calculateMetricsByTsin(
       }
     } catch (error) {
       console.warn(`Could not query collection ${collectionName} for TSIN:`, error);
-    }
-  }
-}
-
-/**
- * Calculate metrics using SKU (FALLBACK METHOD)
- */
-async function calculateMetricsBySku(
-  integrationId: string,
-  sku: string,
-  metrics: any,
-  now: Date,
-  thirtyDaysAgo: Date,
-  defaultPrice: number
-) {
-  const salesCollections = ['takealot_sales']; // Use only the correct Takealot API data collection
-  
-  for (const collectionName of salesCollections) {
-    try {
-      const skuQuery = query(
-        collection(db, collectionName),
-        where('integrationId', '==', integrationId),
-        where('sku', '==', sku)
-      );
-      
-      const salesSnapshot = await getDocs(skuQuery);
-      
-      if (salesSnapshot.size > 0) {
-        console.log(`Found ${salesSnapshot.size} sales records for SKU ${sku} in ${collectionName}`);
-        
-        salesSnapshot.forEach(saleDoc => {
-          const sale = saleDoc.data();
-          processSaleRecord(sale, metrics, now, thirtyDaysAgo, defaultPrice);
-        });
-        
-        break; // Found data, move to next collection
-      }
-    } catch (error) {
-      console.warn(`Could not query collection ${collectionName} for SKU:`, error);
     }
   }
 }

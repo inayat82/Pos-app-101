@@ -14,32 +14,31 @@ interface AdminLayoutProps {
 }
 
 const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
-  // Explicitly type the context value
+  // All hooks must be called at the top level
   const context = useContext(AuthContext);
+  const router = useRouter();
 
-  // Add a check to ensure context is not undefined before destructuring
+  // Handle the case where context is not available
+  useEffect(() => {
+    if (!context) {
+      router.replace('/auth/login');
+    }
+  }, [context, router]);
+
+  // If context is not available, show loading/redirecting message
   if (!context) {
-    // This case should ideally not happen if AuthProvider wraps the app
-    // but it's a good safeguard.
-    // You might want to redirect to an error page or show a loading state.
-    // For now, let's prevent a crash and redirect to login.
-    const router = useRouter();
-    useEffect(() => {
-      router.replace('/auth/login'); // Corrected redirect path
-    }, [router]);
     return <div className="flex justify-center items-center h-screen bg-slate-100">Auth context not available. Redirecting...</div>;
   }
 
   const { currentUser, userProfile, loading, emailVerified } = context as AuthContextType;
-  const router = useRouter();
 
   useEffect(() => {
     if (loading) return;
 
-    if (!currentUser || userProfile?.role !== UserRole.Admin) { // Use UserRole.Admin
-      router.replace('/auth/login'); // Corrected redirect path
+    if (!currentUser || userProfile?.role !== UserRole.Admin) {
+      router.replace('/auth/login');
     } else if (!emailVerified) {
-      router.replace('/auth/login'); // Corrected redirect path (or a dedicated verify-email page)
+      router.replace('/auth/login');
     }
   }, [currentUser, userProfile, loading, emailVerified, router]);
 
@@ -61,21 +60,20 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
 };
 
 const AdminLayoutContent: React.FC<AdminLayoutProps> = ({ children }) => {
+  // All hooks must be called at the top level
   const context = useContext(AuthContext);
   const { pageTitle } = usePageTitle();
-
-  if (!context) {
-    const router = useRouter();
-    useEffect(() => {
-      router.replace('/auth/login');
-    }, [router]);
-    return <div className="flex justify-center items-center h-screen bg-slate-100">Auth context not available. Redirecting...</div>;
-  }
-
-  const { currentUser, userProfile, loading, emailVerified } = context as AuthContextType;
   const router = useRouter();
 
+  // Handle the case where context is not available
   useEffect(() => {
+    if (!context) {
+      router.replace('/auth/login');
+      return;
+    }
+
+    const { currentUser, userProfile, loading, emailVerified } = context as AuthContextType;
+
     if (loading) return;
 
     if (!currentUser || userProfile?.role !== UserRole.Admin) {
@@ -83,7 +81,14 @@ const AdminLayoutContent: React.FC<AdminLayoutProps> = ({ children }) => {
     } else if (!emailVerified) {
       router.replace('/auth/login');
     }
-  }, [currentUser, userProfile, loading, emailVerified, router]);
+  }, [context, router]);
+
+  // If context is not available, show loading/redirecting message
+  if (!context) {
+    return <div className="flex justify-center items-center h-screen bg-slate-100">Auth context not available. Redirecting...</div>;
+  }
+
+  const { currentUser, userProfile, loading, emailVerified } = context as AuthContextType;
 
   if (loading) {
     return <div className="flex justify-center items-center h-screen bg-slate-100">Loading...</div>;
