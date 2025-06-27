@@ -1,4 +1,4 @@
-// src/app/api/admin/sync-jobs/route.ts
+// src/app/api/public/sync-status/route.ts
 
 import { NextRequest, NextResponse } from 'next/server';
 import admin from 'firebase-admin';
@@ -27,7 +27,7 @@ const db = admin.firestore();
 
 export async function GET(request: NextRequest) {
   try {
-    console.log('[SyncJobs] Starting sync jobs data fetch...');
+    console.log('[PublicSyncStatus] Fetching sync status...');
 
     // Initialize stats
     const stats = {
@@ -39,7 +39,7 @@ export async function GET(request: NextRequest) {
       errorRate: 0
     };
 
-    // Get active sync jobs from the new paginated system
+    // Get active sync jobs from the paginated system
     const activeJobs: any[] = [];
     const recentJobs: any[] = [];
     const recentLogs: any[] = [];
@@ -49,6 +49,7 @@ export async function GET(request: NextRequest) {
       const activeJobsSnapshot = await db.collection('takealotSyncJobs')
         .where('status', 'in', ['pending', 'in_progress'])
         .orderBy('startedAt', 'desc')
+        .limit(5)
         .get();
 
       if (!activeJobsSnapshot.empty) {
@@ -103,7 +104,7 @@ export async function GET(request: NextRequest) {
       const recentLogsSnapshot = await db.collection('takealotSyncLogs')
         .where('timestamp', '>=', admin.firestore.Timestamp.fromDate(yesterday))
         .orderBy('timestamp', 'desc')
-        .limit(50)
+        .limit(20)
         .get();
 
       if (!recentLogsSnapshot.empty) {
@@ -123,12 +124,30 @@ export async function GET(request: NextRequest) {
         stats.errorRate = recentLogs.length > 0 ? Math.round((errorLogs.length / recentLogs.length) * 100) : 0;
       }
 
+      // 4. Get environment status
+      const environmentStatus = {
+        firebaseConfigured: !!process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || 
+                           (!!process.env.FIREBASE_SERVICE_ACCOUNT_PROJECT_ID && 
+                            !!process.env.FIREBASE_SERVICE_ACCOUNT_PRIVATE_KEY),
+        takealotApiConfigured: !!process.env.TAKEALOT_API_KEY,
+        cronSecretConfigured: !!process.env.CRON_SECRET
+      };
+
     } catch (dbError: any) {
-      console.error('[SyncJobs] Database error:', dbError);
+      console.error('[PublicSyncStatus] Database error:', dbError);
       throw new Error(`Database error: ${dbError.message}`);
     }
 
-    console.log(`[SyncJobs] Successfully fetched data: ${activeJobs.length} active jobs, ${recentJobs.length} recent jobs, ${recentLogs.length} logs`);
+    console.log(`[PublicSyncStatus] Successfully fetched data: ${activeJobs.length} active jobs, ${recentJobs.length} recent jobs, ${recentLogs.length} logs`);
+
+    // Get environment status
+    const environmentStatus = {
+      firebaseConfigured: !!process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || 
+                         (!!process.env.FIREBASE_SERVICE_ACCOUNT_PROJECT_ID && 
+                          !!process.env.FIREBASE_SERVICE_ACCOUNT_PRIVATE_KEY),
+      takealotApiConfigured: !!process.env.TAKEALOT_API_KEY,
+      cronSecretConfigured: !!process.env.CRON_SECRET
+    };
 
     return NextResponse.json({
       success: true,
@@ -136,18 +155,19 @@ export async function GET(request: NextRequest) {
       activeJobs,
       recentJobs,
       recentLogs,
-      message: 'Successfully fetched sync job data from paginated system',
+      environmentStatus,
+      message: 'Successfully fetched sync status from paginated system',
       isPaginatedSystemActive: true,
       timestamp: new Date().toISOString()
     });
 
   } catch (error: any) {
-    console.error('[SyncJobs] Error in sync jobs API:', error);
+    console.error('[PublicSyncStatus] Error:', error);
     
     return NextResponse.json(
       { 
         success: false, 
-        error: 'Failed to fetch sync job data',
+        error: 'Failed to fetch sync status',
         message: error.message,
         isPaginatedSystemActive: false,
         timestamp: new Date().toISOString()

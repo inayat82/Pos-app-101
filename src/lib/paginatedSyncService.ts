@@ -169,6 +169,23 @@ export async function createOrResumeSyncJob(
   
   console.log(`[PaginatedSync] Created new sync job ${newJobRef.id} for ${adminId} (${dataType})`);
   
+  // Log job creation
+  await logSyncEvent(
+    adminId,
+    newJobRef.id,
+    'start',
+    `New ${dataType} sync job created via ${cronLabel}`,
+    {
+      dataType,
+      cronLabel,
+      maxPagesToFetch,
+      pagesPerChunk,
+      dateFilterType,
+      dateFilterStart: dateFilterStart?.toDate(),
+      dateFilterEnd: dateFilterEnd?.toDate()
+    }
+  );
+  
   return {
     jobId: newJobRef.id,
     shouldProcess: true,
@@ -201,6 +218,20 @@ export async function processJobChunk(jobId: string): Promise<ChunkProcessResult
   if (jobData.status === 'failed') {
     throw new Error(`Sync job ${jobId} has failed: ${jobData.lastError}`);
   }
+
+  // Log chunk start
+  await logSyncEvent(
+    jobData.adminId,
+    jobId,
+    'chunk_progress',
+    `Starting chunk processing from page ${jobData.currentPage}`,
+    {
+      currentPage: jobData.currentPage,
+      totalPages: jobData.totalPages,
+      dataType: jobData.dataType,
+      cronLabel: jobData.cronLabel
+    }
+  );
 
   // Update job status to in_progress
   await jobRef.update({
@@ -363,6 +394,36 @@ export async function processJobChunk(jobId: string): Promise<ChunkProcessResult
       updateData.status = 'completed';
       updateData.completedAt = Timestamp.now();
       console.log(`[PaginatedSync] Job ${jobId} completed after processing ${pagesProcessedInChunk} pages`);
+      
+      // Log completion
+      await logSyncEvent(
+        jobData.adminId,
+        jobId,
+        'complete',
+        `Sync job completed successfully`,
+        {
+          totalItemsProcessed: jobData.totalItemsProcessed + itemsProcessedInChunk,
+          totalPagesProcessed: currentPage,
+          dataType: jobData.dataType,
+          cronLabel: jobData.cronLabel,
+          duration: Date.now() - jobData.startedAt.toDate().getTime()
+        }
+      );
+    } else {
+      // Log chunk completion
+      await logSyncEvent(
+        jobData.adminId,
+        jobId,
+        'chunk_complete',
+        `Chunk processed: ${pagesProcessedInChunk} pages, ${itemsProcessedInChunk} items`,
+        {
+          pagesProcessed: pagesProcessedInChunk,
+          itemsProcessed: itemsProcessedInChunk,
+          currentPage,
+          totalPages: totalPagesDiscovered,
+          dataType: jobData.dataType
+        }
+      );
     }
 
     await jobRef.update(updateData);
@@ -377,6 +438,21 @@ export async function processJobChunk(jobId: string): Promise<ChunkProcessResult
 
   } catch (error: any) {
     console.error(`[PaginatedSync] Critical error processing chunk for job ${jobId}:`, error.message);
+    
+    // Log error
+    await logSyncEvent(
+      jobData.adminId,
+      jobId,
+      'error',
+      `Chunk processing failed: ${error.message}`,
+      {
+        error: error.message,
+        currentPage,
+        itemsProcessedInChunk,
+        pagesProcessedInChunk,
+        dataType: jobData.dataType
+      }
+    );
     
     // Mark job as failed
     await jobRef.update({
@@ -541,4 +617,111 @@ export async function cleanupOldJobs(daysOld: number = 7): Promise<number> {
   }
 
   return snapshot.docs.length;
+}
+
+/**
+ * Log sync events to the takealotSyncLogs collection for admin monitoring
+ */
+export async function logSyncEvent(
+  adminId: string,
+  jobId: string,
+  type: 'start' | 'chunk_progress' | 'chunk_complete' | 'error' | 'complete' | 'cancelled',
+  message: string,
+  metadata?: any
+): Promise<void> {
+  try {
+    await db.collection('takealotSyncLogs').add({
+      adminId,
+      jobId,
+      type,
+      message,
+      metadata: metadata || {},
+      timestamp: Timestamp.now(),
+      source: 'paginated_sync_service'
+    });
+  } catch (error) {
+    console.error('[PaginatedSync] Failed to log sync event:', error);
+    // Don't throw error to avoid breaking sync process
+  }
+}
+
+/**
+ * Get sync job statistics for admin dashboard
+ */
+export async function getSyncJobStats(adminId?: string): Promise<{
+  activeJobs: number;
+  activeProductJobs: number;
+  activeSalesJobs: number;
+  completedJobsLast24h: number;
+  totalItemsProcessedLast24h: number;
+  errorRate: number;
+}> {
+  try {
+    const yesterday = new Date();
+    yesterday.setHours(yesterday.getHours() - 24);
+    
+    // Get active jobs
+    let activeJobsQuery = db.collection('takealotSyncJobs')
+      .where('status', 'in', ['pending', 'in_progress']);
+    
+    if (adminId) {
+      activeJobsQuery = activeJobsQuery.where('adminId', '==', adminId);
+    }
+    
+    const activeJobsSnapshot = await activeJobsQuery.get();
+    const activeJobs = activeJobsSnapshot.docs.map(doc => doc.data() as SyncJobState);
+    
+    // Get completed jobs from last 24h
+    let completedJobsQuery = db.collection('takealotSyncJobs')
+      .where('completedAt', '>=', Timestamp.fromDate(yesterday));
+    
+    if (adminId) {
+      completedJobsQuery = completedJobsQuery.where('adminId', '==', adminId);
+    }
+    
+    const completedJobsSnapshot = await completedJobsQuery.get();
+    const completedJobs = completedJobsSnapshot.docs.map(doc => doc.data() as SyncJobState);
+    
+    // Get error logs from last 24h
+    let errorLogsQuery = db.collection('takealotSyncLogs')
+      .where('timestamp', '>=', Timestamp.fromDate(yesterday))
+      .where('type', 'in', ['error', 'fatal_error']);
+    
+    if (adminId) {
+      errorLogsQuery = errorLogsQuery.where('adminId', '==', adminId);
+    }
+    
+    const errorLogsSnapshot = await errorLogsQuery.get();
+    
+    // Get total logs for error rate calculation
+    let totalLogsQuery = db.collection('takealotSyncLogs')
+      .where('timestamp', '>=', Timestamp.fromDate(yesterday));
+    
+    if (adminId) {
+      totalLogsQuery = totalLogsQuery.where('adminId', '==', adminId);
+    }
+    
+    const totalLogsSnapshot = await totalLogsQuery.get();
+    
+    const stats = {
+      activeJobs: activeJobs.length,
+      activeProductJobs: activeJobs.filter(job => job.dataType === 'products').length,
+      activeSalesJobs: activeJobs.filter(job => job.dataType === 'sales').length,
+      completedJobsLast24h: completedJobs.length,
+      totalItemsProcessedLast24h: completedJobs.reduce((sum, job) => sum + job.totalItemsProcessed, 0),
+      errorRate: totalLogsSnapshot.size > 0 ? Math.round((errorLogsSnapshot.size / totalLogsSnapshot.size) * 100) : 0
+    };
+    
+    return stats;
+  } catch (error) {
+    console.error('[PaginatedSync] Failed to get sync job stats:', error);
+    return {
+      activeJobs: 0,
+      activeProductJobs: 0,
+      activeSalesJobs: 0,
+      completedJobsLast24h: 0,
+      totalItemsProcessedLast24h: 0,
+      errorRate: 0
+    };
+  }
 }
