@@ -65,10 +65,20 @@ export async function POST(request: NextRequest) {
     const integrationData = integrationDoc.data();
     const apiKey = providedApiKey || integrationData?.apiKey;
     
-    if (!apiKey) {
+    if (!apiKey || apiKey === 'your_takealot_api_key_here' || apiKey.includes('placeholder')) {
       return NextResponse.json({ 
-        error: 'API key not found for this integration' 
-      }, { status: 400 });
+        error: 'Demo Mode: Takealot API key not configured',
+        message: 'This is a demo integration. Please configure your real Takealot API key to use this feature.',
+        demoMode: true,
+        success: true,
+        data: {
+          totalRecords: 0,
+          newRecords: 0,
+          updatedRecords: 0,
+          duplicates: 0,
+          message: 'Demo mode - no real data fetched'
+        }
+      }, { status: 200 });
     }// Set up API endpoint
     const endpoint = options.type === 'offers' ? '/v2/offers' : '/V2/sales';
     

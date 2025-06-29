@@ -69,10 +69,19 @@ export async function POST(request: NextRequest) {
     const apiKey = integrationData?.apiKey;
     const adminId = integrationData?.adminId;
     
-    if (!apiKey) {
+    if (!apiKey || apiKey === 'your_takealot_api_key_here' || apiKey.includes('placeholder')) {
       return NextResponse.json({ 
-        error: 'API key not found for this integration' 
-      }, { status: 400 });
+        error: 'Demo Mode: Takealot API key not configured',
+        message: 'This is a demo integration. Please configure your real Takealot API key to use this feature.',
+        demoMode: true,
+        mockData: {
+          totalNew: 0,
+          totalUpdated: 0,
+          totalSkipped: 0,
+          totalFetched: 0,
+          message: 'Demo mode - no real data fetched'
+        }
+      }, { status: 200 });
     }
 
     // Start logging the operation

@@ -48,6 +48,22 @@ export async function GET(request: NextRequest) {
     });    // Apply pagination
     const paginatedLogs = allLogs.slice(offset, offset + limit);
 
+    // If no logs exist, provide helpful demo information
+    if (totalLogs === 0) {
+      return NextResponse.json({ 
+        logs: [],
+        total: 0,
+        totalPages: 0,
+        currentPage: page,
+        limit: limit,
+        hasNextPage: false,
+        hasPreviousPage: false,
+        integrationId: integrationId,
+        message: "No API logs found yet. Logs will appear here once you start using the sync features.",
+        demoMode: true
+      });
+    }
+
     return NextResponse.json({ 
       logs: paginatedLogs,
       total: totalLogs,
