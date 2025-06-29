@@ -68,53 +68,12 @@ export async function GET(request: NextRequest) {
       result.collections.takealot_sales = { error: error?.message || 'Unknown error' };
     }
 
-    // Check old structure (if exists)
-    try {
-      const oldSalesQuery = integrationId 
-        ? db.collection('takealotSales').where('adminId', '==', integrationId)
-        : db.collection('takealotSales').limit(10);
-      
-      const oldSalesSnapshot = await oldSalesQuery.get();
-      
-      result.collections.takealotSales = {
-        total: oldSalesSnapshot.size,
-        sample: []
-      };
-
-      if (oldSalesSnapshot.size > 0) {
-        oldSalesSnapshot.docs.slice(0, 3).forEach(doc => {
-          const data = doc.data();
-          result.collections.takealotSales.sample.push({
-            docId: doc.id,
-            adminId: data.adminId,
-            salesCount: data.sales?.length || 0,
-            lastUpdated: data.lastUpdated?.toDate?.()?.toISOString() || 'unknown'
-          });
-        });
-      }
-    } catch (error: any) {
-      result.collections.takealotSales = { error: error?.message || 'Unknown error' };
-    }
-
-    // Check for documents by adminId pattern (old structure)
-    if (integrationId) {
-      try {
-        const oldDocRef = db.collection('takealotSales').doc(integrationId);
-        const oldDoc = await oldDocRef.get();
-        
-        if (oldDoc.exists) {
-          const data = oldDoc.data();
-          result.oldStructureFound = {
-            docId: oldDoc.id,
-            salesCount: data?.sales?.length || 0,
-            lastUpdated: data?.lastUpdated?.toDate?.()?.toISOString() || 'unknown',
-            sampleSale: data?.sales?.[0] || null
-          };
-        }
-      } catch (error: any) {
-        result.oldStructureError = error?.message || 'Unknown error';
-      }
-    }
+    // Legacy collection check removed - no longer using takealotSales fallback
+    result.collections.takealotSales = {
+      total: 0,
+      sample: [],
+      note: "Legacy collection removed - use takealot_sales only"
+    };
 
     // Get all integration IDs we can find
     try {

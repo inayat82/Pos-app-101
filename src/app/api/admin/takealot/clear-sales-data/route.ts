@@ -15,7 +15,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Get all sales documents for this integration
-    const salesRef = collection(db, 'takealotSales');
+    const salesRef = collection(db, 'takealot_sales');
     const salesQuery = query(salesRef, where('integrationId', '==', integrationId));
     const salesSnapshot = await getDocs(salesQuery);
 

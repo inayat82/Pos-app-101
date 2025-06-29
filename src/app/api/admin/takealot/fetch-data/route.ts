@@ -1,6 +1,7 @@
 // src/app/api/admin/takealot/fetch-data/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import admin from 'firebase-admin';
+import { cronJobLogger } from '@/lib/cronJobLogger';
 import '@/lib/firebase/firebaseAdmin'; // Initialize Firebase Admin SDK
 
 const TAKEALOT_API_BASE = 'https://seller-api.takealot.com';
@@ -32,15 +33,51 @@ export async function POST(request: NextRequest) {
     // Create streaming response for real-time progress updates
     const stream = new ReadableStream({
       async start(controller) {
+        // Start centralized logging for this manual fetch
+        let logId: string | null = null;
+        try {
+          logId = await cronJobLogger.logManualFetch({
+            adminId: integrationId, // Using integrationId as proxy
+            adminName: 'Unknown',
+            adminEmail: 'unknown@example.com',
+            operation: `Streaming ${options.type} Fetch`,
+            apiSource: 'Takealot API',
+            status: 'success', // Will be updated
+            message: `Starting streaming fetch for ${options.type}`,
+            details: `Batch mode: ${options.batchMode}, Page size: ${options.pageSize}`
+          });
+        } catch (logError) {
+          console.error('Failed to start centralized logging:', logError);
+        }
+
         try {
           await performDataFetch(
             controller, 
             encoder, 
             integrationId,
             apiKey, 
-            options
+            options,
+            logId
           );
         } catch (error: any) {
+          // Log error to centralized system
+          if (logId) {
+            try {
+              await cronJobLogger.logManualFetch({
+                adminId: integrationId,
+                adminName: 'Unknown',
+                adminEmail: 'unknown@example.com',
+                operation: `Streaming ${options.type} Fetch Error`,
+                apiSource: 'Takealot API',
+                status: 'failure',
+                message: `Streaming fetch failed: ${error.message}`,
+                errorDetails: error.message
+              });
+            } catch (logError) {
+              console.error('Failed to log error to centralized system:', logError);
+            }
+          }
+
           const errorMessage = `data: ${JSON.stringify({
             error: true,
             message: error.message,
@@ -112,7 +149,8 @@ async function performDataFetch(
   encoder: TextEncoder,
   integrationId: string,
   apiKey: string,
-  options: FetchOptions
+  options: FetchOptions,
+  logId?: string | null
 ) {
   let totalProcessed = 0;
   const totalSkipped = 0;
@@ -137,25 +175,9 @@ async function performDataFetch(
   try {
     updateProgress(`Starting ${options.type} fetch with pagination (${options.pageSize} records per batch)`);
 
-    // Create job log entry in Firebase
+    // Legacy job logging removed - now using centralized logging system
     const db = admin.firestore();
     const jobId = `${options.type}-${integrationId}-${Date.now()}`;
-    
-    await db.collection('takealotJobLogs').add({
-      jobId,
-      integrationId,
-      type: options.type,
-      operation: options.testMode ? 'test_fetch' : 'fetch',
-      status: 'running',
-      startTime: admin.firestore.FieldValue.serverTimestamp(),
-      options,
-      progress: {
-        processed: 0,
-        skipped: 0,
-        errors: 0,
-        currentPage: 1
-      }
-    });
 
     while (hasMore && (!options.limit || totalProcessed < options.limit)) {
       try {

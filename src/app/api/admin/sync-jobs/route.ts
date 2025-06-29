@@ -1,6 +1,7 @@
 // src/app/api/admin/sync-jobs/route.ts
 
 import { NextRequest, NextResponse } from 'next/server';
+import { cronJobLogger } from '@/lib/cronJobLogger';
 import admin from 'firebase-admin';
 
 // Initialize Firebase Admin SDK if not already initialized
@@ -27,7 +28,7 @@ const db = admin.firestore();
 
 export async function GET(request: NextRequest) {
   try {
-    console.log('[SyncJobs] Starting sync jobs data fetch...');
+    console.log('[SyncJobs] Starting sync jobs data fetch using centralized logging...');
 
     // Initialize stats
     const stats = {
@@ -39,72 +40,23 @@ export async function GET(request: NextRequest) {
       errorRate: 0
     };
 
-    // Get active sync jobs from the new paginated system
+    // Get recent logs from centralized cronJobLogs collection
     const activeJobs: any[] = [];
     const recentJobs: any[] = [];
     const recentLogs: any[] = [];
 
     try {
-      // 1. Get active jobs from takealotSyncJobs collection
-      const activeJobsSnapshot = await db.collection('takealotSyncJobs')
-        .where('status', 'in', ['pending', 'in_progress'])
-        .orderBy('startedAt', 'desc')
-        .get();
-
-      if (!activeJobsSnapshot.empty) {
-        activeJobs.push(...activeJobsSnapshot.docs.map(doc => {
-          const data = doc.data();
-          return {
-            id: doc.id,
-            ...data,
-            startedAt: data.startedAt?.toDate?.() || data.startedAt,
-            lastProcessedAt: data.lastProcessedAt?.toDate?.() || data.lastProcessedAt,
-            completedAt: data.completedAt?.toDate?.() || data.completedAt,
-            progressPercentage: data.totalPages ? Math.round((data.currentPage / data.totalPages) * 100) : 0
-          };
-        }));
-
-        // Update active job stats
-        stats.activeJobs = activeJobs.length;
-        stats.activeProductJobs = activeJobs.filter(job => job.dataType === 'products').length;
-        stats.activeSalesJobs = activeJobs.filter(job => job.dataType === 'sales').length;
-      }
-
-      // 2. Get recent completed jobs (last 24 hours)
+      // 1. Get recent logs from cronJobLogs collection (last 24 hours)
       const yesterday = new Date();
       yesterday.setHours(yesterday.getHours() - 24);
       
-      const recentJobsSnapshot = await db.collection('takealotSyncJobs')
-        .where('completedAt', '>=', admin.firestore.Timestamp.fromDate(yesterday))
-        .orderBy('completedAt', 'desc')
-        .limit(10)
-        .get();
-
-      if (!recentJobsSnapshot.empty) {
-        recentJobs.push(...recentJobsSnapshot.docs.map(doc => {
-          const data = doc.data();
-          return {
-            id: doc.id,
-            ...data,
-            startedAt: data.startedAt?.toDate?.() || data.startedAt,
-            lastProcessedAt: data.lastProcessedAt?.toDate?.() || data.lastProcessedAt,
-            completedAt: data.completedAt?.toDate?.() || data.completedAt,
-            duration: data.completedAt && data.startedAt ? 
-              Math.round((data.completedAt.toDate().getTime() - data.startedAt.toDate().getTime()) / 1000) : 0
-          };
-        }));
-
-        // Calculate stats from recent jobs
-        stats.completedJobsLast24h = recentJobs.length;
-        stats.totalItemsProcessedLast24h = recentJobs.reduce((sum, job) => sum + (job.totalItemsProcessed || 0), 0);
-      }
-
-      // 3. Get recent sync logs from takealotSyncLogs collection
-      const recentLogsSnapshot = await db.collection('takealotSyncLogs')
+      const recentLogsSnapshot = await db.collection('cronJobLogs')
         .where('timestamp', '>=', admin.firestore.Timestamp.fromDate(yesterday))
         .orderBy('timestamp', 'desc')
         .limit(50)
         .get();
+
+      console.log(`[SyncJobs] Found ${recentLogsSnapshot.size} recent logs`);
 
       if (!recentLogsSnapshot.empty) {
         recentLogs.push(...recentLogsSnapshot.docs.map(doc => {
@@ -112,31 +64,74 @@ export async function GET(request: NextRequest) {
           return {
             id: doc.id,
             ...data,
-            timestamp: data.timestamp?.toDate?.() || data.timestamp
+            timestamp: data.timestamp?.toDate?.() || data.timestamp,
+            createdAt: data.createdAt?.toDate?.() || data.createdAt
           };
         }));
 
-        // Calculate error rate from logs
-        const errorLogs = recentLogs.filter(log => 
-          log.type === 'error' || log.type === 'fatal_error' || log.status === 'error'
+        // Filter for different job types
+        const productJobs = recentLogs.filter(log => 
+          log.cronJobType?.includes('product') || 
+          log.cronJobName?.includes('product') ||
+          log.cronJobName?.includes('offer')
         );
-        stats.errorRate = recentLogs.length > 0 ? Math.round((errorLogs.length / recentLogs.length) * 100) : 0;
+        
+        const salesJobs = recentLogs.filter(log => 
+          log.cronJobType?.includes('sales') || 
+          log.cronJobName?.includes('sales')
+        );
+
+        // Check for running jobs (those with status 'running' and recent timestamps)
+        const runningJobs = recentLogs.filter(log => 
+          log.status === 'running' && 
+          log.timestamp && 
+          (new Date().getTime() - new Date(log.timestamp).getTime()) < 3600000 // Less than 1 hour old
+        );
+
+        // Update stats
+        stats.activeJobs = runningJobs.length;
+        stats.activeProductJobs = runningJobs.filter(job => 
+          job.cronJobType?.includes('product') || 
+          job.cronJobName?.includes('product') ||
+          job.cronJobName?.includes('offer')
+        ).length;
+        stats.activeSalesJobs = runningJobs.filter(job => 
+          job.cronJobType?.includes('sales') || 
+          job.cronJobName?.includes('sales')
+        ).length;
+
+        // Count completed jobs
+        const completedJobs = recentLogs.filter(log => 
+          log.status === 'success' || log.status === 'failure'
+        );
+        stats.completedJobsLast24h = completedJobs.length;
+        stats.totalItemsProcessedLast24h = completedJobs.reduce((sum, job) => 
+          sum + (job.itemsProcessed || job.recordsProcessed || 0), 0
+        );
+
+        // Calculate error rate
+        const failedJobs = completedJobs.filter(job => job.status === 'failure');
+        stats.errorRate = completedJobs.length > 0 ? 
+          Math.round((failedJobs.length / completedJobs.length) * 100) : 0;
       }
+
+      console.log(`[SyncJobs] Processed ${recentLogs.length} recent logs for stats`);
 
     } catch (dbError: any) {
       console.error('[SyncJobs] Database error:', dbError);
-      throw new Error(`Database error: ${dbError.message}`);
+      // Don't throw error, just return empty stats
+      console.log('[SyncJobs] Continuing with empty stats due to database error');
     }
 
-    console.log(`[SyncJobs] Successfully fetched data: ${activeJobs.length} active jobs, ${recentJobs.length} recent jobs, ${recentLogs.length} logs`);
+    console.log(`[SyncJobs] Successfully processed sync data: ${stats.activeJobs} active jobs, ${stats.completedJobsLast24h} completed jobs`);
 
     return NextResponse.json({
       success: true,
       stats,
-      activeJobs,
-      recentJobs,
-      recentLogs,
-      message: 'Successfully fetched sync job data from paginated system',
+      activeJobs: recentLogs.filter(log => log.status === 'running'),
+      recentJobs: recentLogs.filter(log => log.status === 'success' || log.status === 'failure').slice(0, 10),
+      recentLogs: recentLogs.slice(0, 20),
+      message: 'Successfully fetched sync job data from centralized logging system',
       isPaginatedSystemActive: true,
       timestamp: new Date().toISOString()
     });

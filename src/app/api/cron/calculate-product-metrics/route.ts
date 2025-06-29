@@ -2,6 +2,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { calculateAllProductMetrics } from '@/lib/productMetricsCalculator';
+import { cronJobLogger } from '@/lib/cronJobLogger';
 import { getFirestore } from 'firebase-admin/firestore';
 import admin from 'firebase-admin';
 
@@ -41,6 +42,8 @@ function isAuthorizedCronJob(request: NextRequest): boolean {
 }
 
 export async function POST(request: NextRequest) {
+  let executionId: string | null = null;
+  
   try {
     // Verify authorization
     if (!isAuthorizedCronJob(request)) {
@@ -51,6 +54,17 @@ export async function POST(request: NextRequest) {
     }
 
     console.log('Starting scheduled product metrics calculation...');
+    
+    // Start centralized logging
+    executionId = await cronJobLogger.startExecution({
+      cronJobName: 'calculate-product-metrics',
+      cronJobType: 'scheduled',
+      cronSchedule: '0 */6 * * *', // Every 6 hours (as per vercel.json)
+      apiSource: 'Internal Calculation',
+      triggerType: 'cron',
+      triggerSource: 'Vercel Cron',
+      message: 'Starting product metrics calculation for all integrations'
+    });
     
     // Get all unique integration IDs
     const integrationsSnapshot = await db.collection('takealot_offers')
@@ -98,6 +112,20 @@ export async function POST(request: NextRequest) {
 
     console.log(`Cron job complete. Total: ${totalSuccess} updated, ${totalErrors} errors`);
 
+    // Complete centralized logging
+    if (executionId) {
+      await cronJobLogger.completeExecution(executionId, {
+        status: totalErrors > 0 && totalSuccess === 0 ? 'failure' : 'success',
+        message: `Product metrics calculation completed: ${totalSuccess} products updated, ${totalErrors} errors across ${integrationIds.size} integrations`,
+        totalPages: integrationIds.size, // Each integration is like a "page"
+        totalReads: integrationIds.size, // Each integration read
+        totalWrites: totalSuccess, // Each product updated is a write
+        itemsProcessed: totalSuccess,
+        details: `Processed ${integrationIds.size} integrations. Success rate: ${Math.round((totalSuccess / (totalSuccess + totalErrors)) * 100)}%`,
+        errorDetails: totalErrors > 0 ? `${totalErrors} errors occurred during processing` : undefined
+      });
+    }
+
     return NextResponse.json({
       success: true,
       summary: {
@@ -110,6 +138,17 @@ export async function POST(request: NextRequest) {
 
   } catch (error) {
     console.error('Cron job failed:', error);
+    
+    // Complete centralized logging with error
+    if (executionId) {
+      await cronJobLogger.completeExecution(executionId, {
+        status: 'failure',
+        message: 'Product metrics calculation failed',
+        errorDetails: error instanceof Error ? error.message : 'Unknown error',
+        stackTrace: error instanceof Error ? error.stack : undefined
+      });
+    }
+    
     return NextResponse.json(
       { 
         error: 'Cron job failed',
@@ -120,15 +159,8 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// Also support GET for manual testing
+// Also support GET for Vercel cron (Vercel uses GET by default)
 export async function GET(request: NextRequest) {
-  // Only allow in development
-  if (process.env.NODE_ENV === 'production') {
-    return NextResponse.json(
-      { error: 'Manual execution not allowed in production' },
-      { status: 403 }
-    );
-  }
-
+  // Allow both development testing and production cron execution
   return POST(request);
 }

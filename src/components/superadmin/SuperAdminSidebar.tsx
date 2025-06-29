@@ -13,7 +13,12 @@ import {
   CodeBracketSquareIcon,
   AdjustmentsHorizontalIcon,
   ArrowLeftOnRectangleIcon,
-  BuildingStorefrontIcon 
+  BuildingStorefrontIcon,
+  DocumentTextIcon,
+  ShieldCheckIcon,
+  CircleStackIcon,
+  ChartBarIcon,
+  BellIcon
 } from '@heroicons/react/24/outline';
 
 const SuperAdminSidebar = () => {
@@ -37,11 +42,15 @@ const SuperAdminSidebar = () => {
 
   const menuItems = [
     { name: 'Dashboard', href: '/superadmin/dashboard', icon: HomeIcon },
+    { name: 'Analytics', href: '/superadmin/analytics', icon: ChartBarIcon },
     { name: 'User Management', href: '/superadmin/user-management', icon: UsersIcon },
-    { name: 'Firebase Config', href: '/superadmin/firebase-config', icon: CogIcon },
+    { name: 'System Health', href: '/superadmin/system-health', icon: ShieldCheckIcon },
+    { name: 'Activity Logs', href: '/superadmin/activity-logs', icon: DocumentTextIcon },
+    { name: 'Notifications', href: '/superadmin/notifications', icon: BellIcon },
+    { name: 'Advanced Settings', href: '/superadmin/advanced-settings', icon: CogIcon },
     { name: 'Webshare Proxy', href: '/superadmin/webshare-proxy', icon: GlobeAltIcon },
     { name: 'Zyte API', href: '/superadmin/zyte-api', icon: CodeBracketSquareIcon },
-    { name: 'App Settings', href: '/superadmin/app-settings', icon: AdjustmentsHorizontalIcon },
+    { name: 'API Monitor', href: '/superadmin/api-monitor', icon: ShieldCheckIcon },
   ];
 
   return (

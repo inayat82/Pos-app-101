@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/firebase/firebase';
 import { collection, query, where, getDocs, updateDoc, addDoc, doc, serverTimestamp } from 'firebase/firestore';
+import { cronJobLogger } from '@/lib/cronJobLogger';
 
 export async function POST(request: NextRequest) {
   let integrationId: string | undefined;
@@ -19,6 +20,18 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+
+    // Start centralized logging
+    const logId = await cronJobLogger.logManualFetch({
+      adminId: integrationId, // Using integrationId as a proxy
+      adminName: 'Unknown',
+      adminEmail: 'unknown@example.com',
+      operation: `Optimized ${type} Fetch`,
+      apiSource: 'Takealot API',
+      status: 'success', // Will be updated later if needed
+      message: `Manual optimized fetch started for ${type}`,
+      details: `Fetching last ${limit} ${type} records`
+    });
 
     // Get integration details
     const integrationDoc = await getDocs(
@@ -48,12 +61,12 @@ export async function POST(request: NextRequest) {
 
     if (type === 'sales') {
       apiUrl = `https://seller-api.takealot.com/v2/sales?limit=${limit}`;
-      collectionName = 'takealotSales';
-      uniqueField = 'saleId';
+      collectionName = 'takealot_sales';
+      uniqueField = 'sale_id';
     } else if (type === 'products') {
       apiUrl = `https://seller-api.takealot.com/v2/offers?limit=${limit}`;
-      collectionName = 'takealotProducts';
-      uniqueField = 'tsin';
+      collectionName = 'takealot_offers';
+      uniqueField = 'tsin_id';
     } else {
       return NextResponse.json(
         { error: 'Invalid type. Must be "sales" or "products"' },
@@ -164,7 +177,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Log the operation
+    // Log the operation (legacy - to be removed)
     const logData = {
       integrationId,
       operation: `Optimized Fetch Last ${limit} ${type}`,
@@ -188,13 +201,25 @@ export async function POST(request: NextRequest) {
     };
 
     try {
-      await addDoc(collection(db, 'takealotApiLogs'), {
-        ...logData,
-        createdAt: serverTimestamp()
-      });
+      // Legacy logging removed - now using centralized logging system
     } catch (logError) {
       console.error('Failed to log operation:', logError);
     }
+
+    // Log completion to centralized system
+    await cronJobLogger.logManualFetch({
+      adminId: integrationId,
+      adminName: 'Unknown',
+      adminEmail: 'unknown@example.com',
+      operation: `Optimized ${type} Fetch Completed`,
+      apiSource: 'Takealot API',
+      totalReads: apiData.results.length,
+      totalWrites: newRecords,
+      itemsProcessed: totalSaved,
+      status: 'success',
+      message: `Successfully processed ${totalSaved} ${type} records`,
+      details: `Updated: ${totalUpdated}, New: ${newRecords}`
+    });
 
     return NextResponse.json({
       status: 'success',
@@ -208,7 +233,7 @@ export async function POST(request: NextRequest) {
   } catch (error: any) {
     console.error('Error in optimized fetch:', error);
     
-    // Log the error
+    // Log the error (legacy - to be removed)
     try {
       const errorLogData = {
         integrationId: integrationId || 'unknown',
@@ -220,13 +245,25 @@ export async function POST(request: NextRequest) {
         createdAt: new Date(),
         timestamp: new Date().toISOString()
       };
-
-      await addDoc(collection(db, 'takealotApiLogs'), {
-        ...errorLogData,
-        createdAt: serverTimestamp()
-      });
+      // Legacy logging removed - now using centralized logging system
     } catch (logError) {
       console.error('Failed to log error:', logError);
+    }
+
+    // Log error to centralized system
+    try {
+      await cronJobLogger.logManualFetch({
+        adminId: integrationId || 'unknown',
+        adminName: 'Unknown',
+        adminEmail: 'unknown@example.com',
+        operation: `Optimized ${type || 'unknown'} Fetch Error`,
+        apiSource: 'Takealot API',
+        status: 'failure',
+        message: `Failed to fetch ${type || 'data'}: ${error.message}`,
+        errorDetails: error.message
+      });
+    } catch (logError) {
+      console.error('Failed to log error to centralized system:', logError);
     }
 
     return NextResponse.json(

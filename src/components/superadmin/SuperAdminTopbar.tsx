@@ -1,22 +1,42 @@
 // src/components/superadmin/SuperAdminTopbar.tsx
 "use client";
-import React, { useState, useContext } from 'react';
+import React, { useState, useContext, useEffect } from 'react';
 import { AuthContext, AuthContextType } from '@/context/AuthContext'; // Import AuthContextType
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import EditProfileModal from './EditProfileModal'; 
-import { BuildingStorefrontIcon, UserCircleIcon, CogIcon as CogIconSolid, ArrowRightOnRectangleIcon as LogoutIconSolid } from '@heroicons/react/20/solid';
+import { BuildingStorefrontIcon, UserCircleIcon, CogIcon as CogIconSolid, ArrowRightOnRectangleIcon as LogoutIconSolid, BellIcon } from '@heroicons/react/20/solid';
+import { db } from '@/lib/firebase/firebase';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
 
 const SuperAdminTopbar = () => {
   const authContext = useContext<AuthContextType | undefined>(AuthContext);
   const router = useRouter();
   const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
   const [isEditProfileModalOpen, setIsEditProfileModalOpen] = useState(false);
+  const [unreadNotifications, setUnreadNotifications] = useState(0);
 
   const currentUser = authContext?.currentUser;
   const userProfile = authContext?.userProfile; // Keep this to get the name if available
   const logout = authContext?.logout;
   // Prioritize name from userProfile, then displayName from Firebase user, then part of email
   const displayName = userProfile?.name || currentUser?.displayName || currentUser?.email?.split('@')[0] || 'User';
+
+  // Listen for unread notifications
+  useEffect(() => {
+    const unsubscribe = onSnapshot(
+      query(
+        collection(db, 'notifications'),
+        where('isRead', '==', false),
+        where('isArchived', '==', false)
+      ),
+      (snapshot) => {
+        setUnreadNotifications(snapshot.size);
+      }
+    );
+
+    return () => unsubscribe();
+  }, []);
 
   const handleLogout = async () => {
     if (logout) {
@@ -36,7 +56,19 @@ const SuperAdminTopbar = () => {
         <h1 className="text-xl font-semibold text-gray-800 hidden sm:block">Inventory Hub</h1>
       </div>
 
-      <div className="relative">
+      <div className="flex items-center space-x-4">
+        {/* Notification Bell */}
+        <Link href="/superadmin/notifications" className="relative p-2 text-gray-400 hover:text-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 rounded-full">
+          <BellIcon className="h-6 w-6" />
+          {unreadNotifications > 0 && (
+            <span className="absolute -top-1 -right-1 inline-flex items-center justify-center px-2 py-1 text-xs font-bold leading-none text-white transform translate-x-1/2 -translate-y-1/2 bg-red-600 rounded-full min-w-[1.25rem] h-5">
+              {unreadNotifications > 99 ? '99+' : unreadNotifications}
+            </span>
+          )}
+        </Link>
+
+        {/* Profile Dropdown */}
+        <div className="relative">
         {currentUser && (
           <button 
             onClick={() => setIsProfileDropdownOpen(!isProfileDropdownOpen)}
@@ -88,6 +120,7 @@ const SuperAdminTopbar = () => {
           </div>
         )}
       </div>
+    </div>
       {/* EditProfileModal is expected to fetch its own user data or use context if needed, or only take basic user identifier */}
       {isEditProfileModalOpen && currentUser && (
         <EditProfileModal 

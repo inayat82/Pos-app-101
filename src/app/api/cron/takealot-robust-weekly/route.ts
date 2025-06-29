@@ -2,6 +2,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { retrieveTakealotDataWithDuplicateManagement, cleanupDuplicateRecords } from '@/lib/takealotDataManager';
+import { cronJobLogger } from '@/lib/cronJobLogger';
 import admin from 'firebase-admin';
 
 // Initialize Firebase Admin SDK if not already initialized
@@ -27,14 +28,35 @@ if (!admin.apps.length) {
 const db = admin.firestore();
 
 export async function GET(request: NextRequest) {
+  const logId = await cronJobLogger.startExecution({
+    cronJobName: 'takealot-robust-weekly',
+    cronJobType: 'scheduled',
+    cronSchedule: '0 2 * * 0', // Weekly at 2 AM Sunday
+    triggerType: 'cron',
+    triggerSource: 'vercel-cron',
+    apiSource: 'Takealot API',
+    message: 'Starting weekly comprehensive Takealot data sync',
+    details: 'Weekly comprehensive Takealot data sync with cleanup'
+  });
+
   try {
     // Verify this is a cron request
     const authHeader = request.headers.get('authorization');
     if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+      await cronJobLogger.completeExecution(logId, {
+        status: 'failure',
+        message: 'Unauthorized - Invalid cron secret',
+        errorDetails: 'Authentication failed'
+      });
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     console.log('[Cron] Starting robust weekly Takealot sync');
+    await cronJobLogger.updateExecution(logId, {
+      status: 'running',
+      message: 'Fetching enabled integrations',
+      details: 'Starting weekly sync process'
+    });
 
     const integrationsSnapshot = await db.collection('takealotIntegrations')
       .where('cronEnabled', '==', true)
@@ -42,6 +64,11 @@ export async function GET(request: NextRequest) {
 
     if (integrationsSnapshot.empty) {
       console.log('[Cron] No enabled integrations found');
+      await cronJobLogger.completeExecution(logId, {
+        status: 'success',
+        message: 'No enabled integrations found',
+        details: 'No integrations available for processing'
+      });
       return NextResponse.json({ 
         success: true, 
         message: 'No enabled integrations found',
@@ -132,14 +159,7 @@ export async function GET(request: NextRequest) {
         } catch (error: any) {
           console.error(`[Cron] Error processing integration ${integrationId}:`, error);
           
-          await db.collection('takealotSyncLogs').add({
-            integrationId,
-            adminId: integrationData.adminId,
-            cronLabel: 'weekly',
-            error: error.message,
-            timestamp: admin.firestore.Timestamp.now(),
-            type: 'robust_sync_error'
-          });
+          // Legacy logging removed - now using centralized logging system
 
           return {
             integrationId,
@@ -166,18 +186,15 @@ export async function GET(request: NextRequest) {
     const totalNewRecords = results.reduce((sum, r) => sum + ((r as any).totalNewRecords || 0), 0);
     const totalDuplicates = results.reduce((sum, r) => sum + ((r as any).totalDuplicates || 0), 0);
     const totalDuplicatesRemoved = results.reduce((sum, r) => sum + ((r as any).totalDuplicatesRemoved || 0), 0);
+    // Legacy logging removed - now using centralized logging system
 
-    // Log comprehensive summary
-    await db.collection('takealotSyncLogs').add({
-      cronLabel: 'weekly',
-      totalIntegrations: results.length,
-      successfulIntegrations: successful,
-      failedIntegrations: failed,
-      totalNewRecords,
-      totalDuplicates,
-      totalDuplicatesRemoved,
-      timestamp: admin.firestore.Timestamp.now(),
-      type: 'robust_sync_summary'
+    // Complete centralized logging
+    await cronJobLogger.completeExecution(logId, {
+      status: successful === results.length ? 'success' : 'failure',
+      totalWrites: totalNewRecords,
+      itemsProcessed: totalNewRecords + totalDuplicates,
+      message: `Weekly comprehensive sync completed: ${successful} successful, ${failed} failed`,
+      details: `Records: ${totalNewRecords} new, ${totalDuplicates} duplicates found, ${totalDuplicatesRemoved} duplicates removed`
     });
 
     console.log(`[Cron] Weekly comprehensive sync completed: ${successful} successful, ${failed} failed`);
@@ -204,12 +221,14 @@ export async function GET(request: NextRequest) {
 
   } catch (error: any) {
     console.error('[Cron] Fatal error in weekly sync:', error);
-    
-    await db.collection('takealotSyncLogs').add({
-      cronLabel: 'weekly',
-      error: error.message,
-      timestamp: admin.firestore.Timestamp.now(),
-      type: 'robust_sync_fatal_error'
+    // Legacy logging removed - now using centralized logging system
+
+    // Complete centralized logging with error
+    await cronJobLogger.completeExecution(logId, {
+      status: 'failure',
+      message: 'Fatal error in weekly sync',
+      errorDetails: error.message,
+      stackTrace: error.stack
     });
 
     return NextResponse.json(

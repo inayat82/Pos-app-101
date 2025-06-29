@@ -165,20 +165,6 @@ service cloud.firestore {
                      );
     }
 
-    // TAKEALOT SALES COLLECTION (legacy)
-    match /takealotSales/{saleId} {allow read, write, create, delete: if request.auth != null && 
-                                          (
-                                            isAdmin(request.auth.uid) ||
-                                            isSuperAdmin(request.auth.uid)
-                                          );
-        // Allow read access to assigned users
-      allow read: if request.auth != null && 
-                     (
-                       isTakealotUser(request.auth.uid) ||
-                       isPOSUser(request.auth.uid)
-                     );
-    }
-
     // TAKEALOT CRON JOBS COLLECTION
     match /takealotCronJobs/{jobId} {
       allow read, write, create, delete: if request.auth != null && 

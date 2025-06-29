@@ -1,6 +1,7 @@
 // src/app/api/admin/takealot/optimized-fetch-100/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { dbAdmin as db } from '@/lib/firebase/firebaseAdmin';
+import { cronJobLogger } from '@/lib/cronJobLogger';
 
 const TAKEALOT_API_BASE = 'https://seller-api.takealot.com';
 
@@ -79,7 +80,24 @@ export async function POST(request: NextRequest) {
         let totalSkipped = 0;
         let totalErrors = 0;
 
-        try {          // Send initial progress
+        try {
+          // Log start of operation using centralized logging system
+          const startLogId = await cronJobLogger.logManualFetchEnhanced({
+            adminId: integrationData?.adminId || integrationId,
+            integrationId,
+            apiSource: 'takealot',
+            operation: `Optimized ${options.type === 'sales' ? 'Sales' : 'Products'} Fetch - Started`,
+            status: 'success',
+            message: `Starting optimized ${options.type} fetch${options.limit ? ` (limit: ${options.limit})` : ' (unlimited)'}`,
+            details: JSON.stringify({
+              fetchLimit: options.limit || 'unlimited',
+              daysFilter: options.days || null,
+              verificationEnabled: options.verifyExisting,
+              optimized: true
+            })
+          });
+
+          // Send initial progress
           controller.enqueue(encoder.encode(`data: ${JSON.stringify({
             message: `Starting optimized ${options.type} fetch${options.limit ? ` - Getting ${options.limit} records` : ' - Getting all records'}`,
             progress: 5,
@@ -472,7 +490,35 @@ export async function POST(request: NextRequest) {
             }
           };
 
-          await db.collection('fetch_logs').add(logData);
+          // Log using centralized logging system
+          await cronJobLogger.logManualFetchEnhanced({
+            adminId: integrationData?.adminId || integrationId,
+            integrationId,
+            apiSource: 'takealot',
+            operation: `Optimized ${options.type === 'sales' ? 'Sales' : 'Products'} Fetch`,
+            itemsProcessed: allFetchedRecords.length,
+            status: totalErrors > 0 ? 'failure' : 'success',
+            message: `Optimized fetch completed - ${totalNew} new, ${totalUpdated} updated, ${totalSkipped} unchanged`,
+            details: JSON.stringify({
+              recordsFetched: allFetchedRecords.length,
+              recordsNew: totalNew,
+              recordsUpdated: totalUpdated,
+              recordsSkipped: totalSkipped,
+              errors: totalErrors,
+              optimized: true,
+              verificationEnabled: options.verifyExisting,
+              summary: {
+                fetchedFromAPI: allFetchedRecords.length,
+                newRecords: totalNew,
+                updatedRecords: totalUpdated,
+                skippedRecords: totalSkipped,
+                errors: totalErrors,
+                optimizationUsed: true
+              }
+            }),
+            errorDetails: totalErrors > 0 ? `Completed with ${totalErrors} errors` : undefined,
+            duration: operationDuration
+          });
 
           // Send completion
           controller.enqueue(encoder.encode(`data: ${JSON.stringify({
@@ -496,6 +542,31 @@ export async function POST(request: NextRequest) {
 
         } catch (error: any) {
           console.error('Optimized fetch error:', error);
+          
+          // Log error using centralized logging system
+          try {
+            await cronJobLogger.logManualFetchEnhanced({
+              adminId: integrationData?.adminId || integrationId,
+              integrationId,
+              apiSource: 'takealot',
+              operation: `Optimized ${options.type === 'sales' ? 'Sales' : 'Products'} Fetch`,
+              itemsProcessed: 0,
+              status: 'failure',
+              message: `Optimized fetch failed: ${error.message}`,
+              details: JSON.stringify({
+                recordsFetched: 0,
+                recordsNew: totalNew,
+                recordsUpdated: totalUpdated,
+                recordsSkipped: totalSkipped,
+                errors: totalErrors + 1,
+                optimized: true
+              }),
+              errorDetails: error.message,
+              duration: Date.now() - operationStartTime
+            });
+          } catch (logError) {
+            console.error('Failed to log error:', logError);
+          }
           
           controller.enqueue(encoder.encode(`data: ${JSON.stringify({
             error: true,

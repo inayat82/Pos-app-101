@@ -100,8 +100,8 @@ export async function GET(request: NextRequest) {
         stats.totalItemsProcessedLast24h = recentJobs.reduce((sum, job) => sum + (job.totalItemsProcessed || 0), 0);
       }
 
-      // 3. Get recent sync logs from takealotSyncLogs collection
-      const recentLogsSnapshot = await db.collection('takealotSyncLogs')
+      // 3. Get recent sync logs from centralized cronJobLogs collection
+      const recentLogsSnapshot = await db.collection('cronJobLogs')
         .where('timestamp', '>=', admin.firestore.Timestamp.fromDate(yesterday))
         .orderBy('timestamp', 'desc')
         .limit(20)

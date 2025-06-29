@@ -2,6 +2,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createOrResumeSyncJob, processJobChunk } from '@/lib/paginatedSyncService';
+import { cronJobLogger } from '@/lib/cronJobLogger';
 import admin from 'firebase-admin';
 
 // Initialize Firebase Admin SDK if not already initialized
@@ -76,15 +77,21 @@ export async function POST(request: NextRequest) {
   } catch (error: any) {
     console.error('[TestSync] Error:', error);
     
-    // Log error to sync logs
-    await db.collection('takealotSyncLogs').add({
-      cronLabel: 'test_sync',
-      message: `Test sync failed: ${error.message}`,
-      timestamp: admin.firestore.Timestamp.now(),
-      type: 'error',
-      error: error.message,
-      stack: error.stack
-    });
+    // Log error to centralized logging system
+    try {
+      await cronJobLogger.logManualFetch({
+        adminId: 'test-user',
+        adminName: 'Test User',
+        adminEmail: 'test@example.com',
+        apiSource: 'test-sync-endpoint',
+        operation: 'Test Sync',
+        status: 'failure',
+        message: `Test sync failed: ${error.message}`,
+        errorDetails: error.stack || error.message
+      });
+    } catch (logError) {
+      console.error('Failed to log test sync error:', logError);
+    }
     
     return NextResponse.json({
       success: false,
@@ -96,22 +103,16 @@ export async function POST(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   try {
-    // Return test sync status
-    const recentLogsSnapshot = await db.collection('takealotSyncLogs')
-      .where('cronLabel', '==', 'test_sync')
-      .orderBy('timestamp', 'desc')
-      .limit(10)
-      .get();
-    
-    const logs = recentLogsSnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-      timestamp: doc.data().timestamp?.toDate?.() || doc.data().timestamp
-    }));
+    // Return test sync status from centralized logs
+    const logs = await cronJobLogger.getAllLogs({
+      limit: 10,
+      cronJobName: 'Manual: Test Sync'
+    });
     
     return NextResponse.json({
       success: true,
-      logs,
+      logs: logs.logs,
+      totalLogs: logs.total,
       message: 'Test sync logs retrieved',
       timestamp: new Date().toISOString()
     });

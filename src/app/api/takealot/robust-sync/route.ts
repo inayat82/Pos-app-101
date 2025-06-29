@@ -177,7 +177,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Get statistics about the data for this admin
-    const collectionName = dataType === 'products' ? 'takealotProducts' : 'takealotSales';
+    const collectionName = dataType === 'products' ? 'takealot_offers' : 'takealot_sales';
     
     const totalSnapshot = await db.collection(collectionName)
       .where('integrationId', '==', adminId)

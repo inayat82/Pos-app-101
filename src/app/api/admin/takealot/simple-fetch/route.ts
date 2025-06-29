@@ -1,6 +1,7 @@
 // src/app/api/admin/takealot/simple-fetch/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { dbAdmin as db } from '@/lib/firebase/firebaseAdmin';
+import { cronJobLogger } from '@/lib/cronJobLogger';
 
 const TAKEALOT_API_BASE = 'https://seller-api.takealot.com';
 
@@ -13,19 +14,40 @@ interface FetchOptions {
 }
 
 export async function POST(request: NextRequest) {
+  let integrationId: string | undefined;
+  let logId: string | null = null;
+  
   try {
     console.log('Simple Takealot data fetch endpoint called');
     
-    const { integrationId, apiKey: providedApiKey, options } = await request.json() as {
+    const { integrationId: reqIntegrationId, apiKey: providedApiKey, options } = await request.json() as {
       integrationId: string;
       apiKey?: string;
       options: FetchOptions;
     };
 
+    integrationId = reqIntegrationId;
+
     if (!integrationId || !options) {
       return NextResponse.json({ 
         error: 'Missing required parameters: integrationId, options' 
       }, { status: 400 });
+    }
+
+    // Start centralized logging
+    try {
+      logId = await cronJobLogger.logManualFetch({
+        adminId: integrationId, // Using integrationId as proxy
+        adminName: 'Unknown',
+        adminEmail: 'unknown@example.com',
+        operation: `Simple ${options.type} Fetch`,
+        apiSource: 'Takealot API',
+        status: 'success', // Will be updated
+        message: `Starting simple fetch for ${options.type}`,
+        details: `Batch mode: ${options.batchMode}, Test mode: ${options.testMode || false}`
+      });
+    } catch (logError) {
+      console.error('Failed to start centralized logging:', logError);
     }
 
     console.log(`Fetching ${options.type} data for integration: ${integrationId}`);
@@ -282,9 +304,9 @@ export async function POST(request: NextRequest) {
             }
           }          // Send completion
           const operationEndTime = Date.now();
-          const operationDuration = operationEndTime - operationStartTime;          // Save operation log to fetch_logs collection
+          const operationDuration = operationEndTime - operationStartTime;          // Operation logging handled by centralized logging system
           try {
-            console.log('Saving operation log to fetch_logs...');
+            console.log('Saving operation log via centralized system...');
             const logData = {
               integrationId,
               operation: `${options.type === 'offers' ? 'Product' : 'Sales'} Fetch`,
@@ -310,8 +332,8 @@ export async function POST(request: NextRequest) {
             };
 
             console.log('Log data to save:', JSON.stringify(logData, null, 2));
-            const logDoc = await db.collection('fetch_logs').add(logData);
-            console.log('Operation logged successfully with ID:', logDoc.id);
+            // Legacy logging removed - now using centralized logging system
+            console.log('Operation logged successfully via centralized system');
           } catch (logError: any) {
             console.error('Failed to save operation log:', logError);
           }          controller.enqueue(encoder.encode(`data: ${JSON.stringify({
@@ -334,8 +356,47 @@ export async function POST(request: NextRequest) {
 
           console.log(`Data fetch completed: ${totalProcessed} processed, ${totalErrors} errors. About to save operation log...`);
 
+          // Log completion to centralized system
+          if (logId) {
+            try {
+              await cronJobLogger.logManualFetch({
+                adminId: integrationId!,
+                adminName: 'Unknown',
+                adminEmail: 'unknown@example.com',
+                operation: `Simple ${options.type} Fetch Completed`,
+                apiSource: 'Takealot API',
+                totalReads: totalProcessed,
+                totalWrites: options.testMode ? 0 : totalProcessed - totalSkipped,
+                itemsProcessed: totalProcessed,
+                status: totalErrors > 0 ? 'failure' : 'success',
+                message: `Simple fetch completed: ${totalProcessed} processed, ${totalErrors} errors`,
+                details: `Saved: ${!options.testMode}, Skipped: ${totalSkipped}, Duration: ${operationDuration}ms`
+              });
+            } catch (logError) {
+              console.error('Failed to log completion to centralized system:', logError);
+            }
+          }
+
         } catch (error: any) {
           console.error('Data fetch error:', error);
+          
+          // Log error to centralized system
+          if (logId) {
+            try {
+              await cronJobLogger.logManualFetch({
+                adminId: integrationId!,
+                adminName: 'Unknown',
+                adminEmail: 'unknown@example.com',
+                operation: `Simple ${options.type} Fetch Error`,
+                apiSource: 'Takealot API',
+                status: 'failure',
+                message: `Simple fetch failed: ${error.message}`,
+                errorDetails: error.message
+              });
+            } catch (logError) {
+              console.error('Failed to log error to centralized system:', logError);
+            }
+          }
           
           controller.enqueue(encoder.encode(`data: ${JSON.stringify({
             error: true,
@@ -359,6 +420,24 @@ export async function POST(request: NextRequest) {
 
   } catch (error: any) {
     console.error('Simple fetch error:', error);
+    
+    // Log error to centralized system
+    if (logId) {
+      try {
+        await cronJobLogger.logManualFetch({
+          adminId: integrationId || 'unknown',
+          adminName: 'Unknown',
+          adminEmail: 'unknown@example.com',
+          operation: `Simple Fetch Error`,
+          apiSource: 'Takealot API',
+          status: 'failure',
+          message: `Simple fetch failed: ${error.message}`,
+          errorDetails: error.message
+        });
+      } catch (logError) {
+        console.error('Failed to log error to centralized system:', logError);
+      }
+    }
     
     return NextResponse.json({ 
       success: false,

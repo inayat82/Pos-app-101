@@ -156,15 +156,7 @@ export async function GET(request: NextRequest) {
         } catch (error: any) {
           console.error(`[Cron] Error processing integration ${integrationId}:`, error);
           
-          // Log error to Firestore
-          await db.collection('takealotSyncLogs').add({
-            integrationId,
-            adminId: integrationData.adminId,
-            cronLabel: '10min',
-            error: error.message,
-            timestamp: admin.firestore.Timestamp.now(),
-            type: 'robust_sync_error'
-          });
+          // Legacy logging removed - now using centralized logging system
 
           return {
             integrationId,
@@ -188,16 +180,7 @@ export async function GET(request: NextRequest) {
     const failed = results.filter(r => !r.success).length;
     const skipped = results.filter(r => r.skipped).length;
 
-    // Log summary
-    await db.collection('takealotSyncLogs').add({
-      cronLabel: '10min',
-      totalIntegrations: results.length,
-      successfulIntegrations: successful,
-      failedIntegrations: failed,
-      skippedIntegrations: skipped,
-      timestamp: admin.firestore.Timestamp.now(),
-      type: 'robust_sync_summary'
-    });
+    // Legacy logging removed - now using centralized logging system
 
     console.log(`[Cron] 10-minute sync completed: ${successful} successful, ${failed} failed, ${skipped} skipped`);
 
@@ -218,13 +201,7 @@ export async function GET(request: NextRequest) {
   } catch (error: any) {
     console.error('[Cron] Fatal error in 10-minute sync:', error);
     
-    // Log fatal error
-    await db.collection('takealotSyncLogs').add({
-      cronLabel: '10min',
-      error: error.message,
-      timestamp: admin.firestore.Timestamp.now(),
-      type: 'robust_sync_fatal_error'
-    });
+    // Legacy logging removed - now using centralized logging system
 
     return NextResponse.json({ 
       error: 'Fatal error in 10-minute sync', 

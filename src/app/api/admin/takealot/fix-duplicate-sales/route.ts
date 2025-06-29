@@ -237,8 +237,7 @@ export async function POST(request: NextRequest) {
             }
           };
 
-          // Save to fetch_logs for UI display (instead of cleanup_logs)
-          await db.collection('fetch_logs').add(logData);
+          // Legacy logging removed - now using centralized logging system
 
           // Send completion
           controller.enqueue(encoder.encode(`data: ${JSON.stringify({

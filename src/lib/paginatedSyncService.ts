@@ -620,7 +620,8 @@ export async function cleanupOldJobs(daysOld: number = 7): Promise<number> {
 }
 
 /**
- * Log sync events to the takealotSyncLogs collection for admin monitoring
+ * Log sync events to the centralized logging system
+ * @deprecated - now using centralized cronJobLogger system
  */
 export async function logSyncEvent(
   adminId: string,
@@ -630,15 +631,8 @@ export async function logSyncEvent(
   metadata?: any
 ): Promise<void> {
   try {
-    await db.collection('takealotSyncLogs').add({
-      adminId,
-      jobId,
-      type,
-      message,
-      metadata: metadata || {},
-      timestamp: Timestamp.now(),
-      source: 'paginated_sync_service'
-    });
+    // Legacy logging removed - now using centralized logging system
+    console.log(`[PaginatedSync] ${type}: ${message}`, metadata);
   } catch (error) {
     console.error('[PaginatedSync] Failed to log sync event:', error);
     // Don't throw error to avoid breaking sync process
@@ -682,10 +676,10 @@ export async function getSyncJobStats(adminId?: string): Promise<{
     const completedJobsSnapshot = await completedJobsQuery.get();
     const completedJobs = completedJobsSnapshot.docs.map(doc => doc.data() as SyncJobState);
     
-    // Get error logs from last 24h
-    let errorLogsQuery = db.collection('takealotSyncLogs')
+    // Get error logs from last 24h from centralized logging
+    let errorLogsQuery = db.collection('cronJobLogs')
       .where('timestamp', '>=', Timestamp.fromDate(yesterday))
-      .where('type', 'in', ['error', 'fatal_error']);
+      .where('status', 'in', ['failure', 'timeout', 'cancelled']);
     
     if (adminId) {
       errorLogsQuery = errorLogsQuery.where('adminId', '==', adminId);
@@ -693,8 +687,8 @@ export async function getSyncJobStats(adminId?: string): Promise<{
     
     const errorLogsSnapshot = await errorLogsQuery.get();
     
-    // Get total logs for error rate calculation
-    let totalLogsQuery = db.collection('takealotSyncLogs')
+    // Get total logs for error rate calculation from centralized logging
+    let totalLogsQuery = db.collection('cronJobLogs')
       .where('timestamp', '>=', Timestamp.fromDate(yesterday));
     
     if (adminId) {

@@ -5,11 +5,14 @@
 
 const axios = require('axios');
 
+// Set the CRON_SECRET for testing
+process.env.CRON_SECRET = 'N1QgCVukg8LZ6fUiJ5jA';
+
 const BASE_URL = process.env.NODE_ENV === 'production' 
   ? 'https://your-pos-app.vercel.app' 
   : 'http://localhost:3000';
 
-const CRON_SECRET = process.env.CRON_SECRET || 'your-cron-secret';
+const CRON_SECRET = process.env.CRON_SECRET || 'N1QgCVukg8LZ6fUiJ5jA';
 
 async function testCronEndpoint(endpoint, description) {
   console.log(`\n🧪 Testing: ${description}`);

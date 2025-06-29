@@ -163,42 +163,9 @@ export default function TakealotSalesPage({ params }: { params: Promise<{ integr
         
         setSales(uniqueSales);
       } else {
-        // Fallback to takealotSales (DEPRECATED: mock/test data - will be removed)
-        const fallbackQuery = query(
-          collection(db, 'takealotSales'),
-          where('integrationId', '==', integrationId)
-        );
-        
-        const fallbackSnapshot = await getDocs(fallbackQuery);
-        console.log('Found in takealotSales:', fallbackSnapshot.size);        const salesData = fallbackSnapshot.docs.map(doc => {
-          const data = doc.data();
-          return {
-            order_id: data.order_id || data.sale_id || 'N/A',
-            order_item_id: data.order_item_id || data.item_id || '',
-            product_title: data.product_title || data.title || data.name || 'Unknown Product',
-            customer_name: data.customer_name || data.customer || 'Unknown Customer',
-            order_date: data.order_date || data.sale_date || data.created_date || 'Unknown Date',
-            selling_price: data.selling_price || data.price || data.amount || 0,
-            quantity: data.quantity || data.qty || 1,
-            status: data.status || data.sale_status || 'Unknown',
-            tsin_id: data.tsin_id,
-            sku: data.sku || data.seller_sku,
-            customer_dc: data.customer_dc || data.dc || '',
-            dc: data.customer_dc || data.dc || '',
-            takealot_url_mol: data.takealot_url_mol || '',
-            success_fee: data.success_fee || 0,
-            total_fee: data.total_fee || 0,
-            stock_transfer_fee: data.stock_transfer_fee || 0,
-            courier_collection_fee: data.courier_collection_fee || 0,
-            ...data
-          };        });
-        
-        // Remove duplicates based on order_id only (ensure unique Order IDs)
-        const uniqueSales = salesData.filter((sale, index, self) => 
-          index === self.findIndex(s => s.order_id === sale.order_id)
-        );
-        
-        setSales(uniqueSales);
+        // No fallback - if takealot_sales has no data, show empty state
+        console.log('No sales data found in takealot_sales collection');
+        setSales([]);
       }
 
     } catch (error) {

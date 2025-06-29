@@ -2,6 +2,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createOrResumeSyncJob, processJobChunk, getActiveSyncJobs } from '@/lib/paginatedSyncService';
+import { cronJobLogger } from '@/lib/cronJobLogger';
 import admin from 'firebase-admin';
 
 // Initialize Firebase Admin SDK if not already initialized
@@ -28,6 +29,7 @@ const db = admin.firestore();
 
 export async function GET(request: NextRequest) {
   const startTime = Date.now();
+  let executionId: string | null = null;
   
   try {
     // Verify this is a cron request
@@ -38,6 +40,17 @@ export async function GET(request: NextRequest) {
 
     console.log('[6MonthCron] Starting 6-month sales sync');
 
+    // Start centralized logging
+    executionId = await cronJobLogger.startExecution({
+      cronJobName: 'takealot-6month-sales',
+      cronJobType: 'scheduled',
+      cronSchedule: '0 0 */12 * *', // Twice daily (as per vercel.json)
+      apiSource: 'Takealot API',
+      triggerType: 'cron',
+      triggerSource: 'Vercel Cron',
+      message: 'Starting 6-month sales sync for all enabled integrations'
+    });
+
     // Get enabled integrations
     const integrationsSnapshot = await db.collection('takealotIntegrations')
       .where('cronEnabled', '==', true)
@@ -46,14 +59,19 @@ export async function GET(request: NextRequest) {
     if (integrationsSnapshot.empty) {
       console.log('[6MonthCron] No enabled integrations found');
       
-      // Log to sync logs
-      await db.collection('takealotSyncLogs').add({
-        cronLabel: '6_month_sales',
-        message: 'No enabled integrations found',
-        timestamp: admin.firestore.Timestamp.now(),
-        type: 'info',
-        processingTimeMs: Date.now() - startTime
-      });
+      // Complete centralized logging
+      if (executionId) {
+        await cronJobLogger.completeExecution(executionId, {
+          status: 'success',
+          message: 'No enabled integrations found - nothing to process',
+          totalPages: 0,
+          totalReads: 0,
+          totalWrites: 0,
+          itemsProcessed: 0
+        });
+      }
+
+      // No integrations message is now logged via centralized logging system
 
       return NextResponse.json({ 
         success: true, 
@@ -86,6 +104,27 @@ export async function GET(request: NextRequest) {
       console.log(`[6MonthCron] Processing 6-month sales for integration ${integrationId}`);
 
       try {
+        // Get admin details for logging
+        let adminName = 'Unknown Admin';
+        let adminEmail = 'unknown@example.com';
+        try {
+          const adminDoc = await db.collection('users').doc(adminId).get();
+          if (adminDoc.exists) {
+            const adminData = adminDoc.data();
+            adminName = adminData?.name || adminData?.displayName || 'Unknown Admin';
+            adminEmail = adminData?.email || 'unknown@example.com';
+          }
+        } catch (adminError) {
+          console.warn(`[6MonthCron] Could not fetch admin details for ${adminId}:`, adminError);
+        }
+
+        // Update centralized logging with progress
+        if (executionId) {
+          await cronJobLogger.updateExecution(executionId, {
+            message: `Processing 6-month sales for integration ${integrationId} (Admin: ${adminName})`
+          });
+        }
+
         // Create or resume 6-month sales sync job
         const { jobId, shouldProcess, currentPage } = await createOrResumeSyncJob(
           adminId,
@@ -123,24 +162,7 @@ export async function GET(request: NextRequest) {
           ...chunkResult
         });
 
-        // Log chunk processing result
-        await db.collection('takealotSyncLogs').add({
-          integrationId,
-          adminId,
-          cronLabel: '6_month_sales',
-          dataType: 'sales',
-          jobId,
-          currentPage,
-          itemsProcessed: chunkResult.itemsProcessed,
-          pagesProcessed: chunkResult.pagesProcessed,
-          reachedEnd: chunkResult.reachedEnd,
-          success: chunkResult.success,
-          dateFilter: '6_months',
-          message: chunkResult.errorMessage || `Processed ${chunkResult.pagesProcessed} pages, ${chunkResult.itemsProcessed} items (6-month filter)`,
-          timestamp: admin.firestore.Timestamp.now(),
-          type: 'chunk_processed',
-          processingTimeMs: Date.now() - startTime
-        });
+        // Chunk processing result is now logged via centralized logging system
 
       } catch (error: any) {
         console.error(`[6MonthCron] Error processing 6-month sales for integration ${integrationId}:`, error);
@@ -151,18 +173,7 @@ export async function GET(request: NextRequest) {
           success: false,
           message: error.message
         });
-
-        // Log error
-        await db.collection('takealotSyncLogs').add({
-          integrationId,
-          adminId,
-          cronLabel: '6_month_sales',
-          dataType: 'sales',
-          error: error.message,
-          timestamp: admin.firestore.Timestamp.now(),
-          type: 'error',
-          processingTimeMs: Date.now() - startTime
-        });
+    // Legacy logging removed - now using centralized logging system
       }
 
       // Add delay between integrations
@@ -180,23 +191,22 @@ export async function GET(request: NextRequest) {
     const active6MonthJobs = activeJobs.filter(j => j.cronLabel === '6_month_sales');
 
     const summaryMessage = `6-month sales sync completed: ${successful} successful, ${failed} failed, ${totalItemsProcessed} items processed, ${totalPagesProcessed} pages processed. Active 6-month jobs: ${active6MonthJobs.length}`;
-
-    // Log summary
-    await db.collection('takealotSyncLogs').add({
-      cronLabel: '6_month_sales',
-      message: summaryMessage,
-      totalIntegrations: results.length,
-      successfulIntegrations: successful,
-      failedIntegrations: failed,
-      totalItemsProcessed,
-      totalPagesProcessed,
-      active6MonthJobs: active6MonthJobs.length,
-      timestamp: admin.firestore.Timestamp.now(),
-      type: 'summary',
-      processingTimeMs: Date.now() - startTime
-    });
+    // Legacy logging removed - now using centralized logging system
 
     console.log(`[6MonthCron] ${summaryMessage}`);
+
+    // Complete centralized logging
+    if (executionId) {
+      await cronJobLogger.completeExecution(executionId, {
+        status: failed > 0 && successful === 0 ? 'failure' : 'success',
+        message: summaryMessage,
+        totalPages: totalPagesProcessed,
+        totalReads: totalPagesProcessed, // Each page is a read
+        totalWrites: totalItemsProcessed, // Each item processed is a write
+        itemsProcessed: totalItemsProcessed,
+        details: `Processed ${results.length} integrations: ${successful} successful, ${failed} failed. Active 6-month jobs: ${active6MonthJobs.length}`
+      });
+    }
 
     return NextResponse.json({
       success: true,
@@ -219,14 +229,16 @@ export async function GET(request: NextRequest) {
   } catch (error: any) {
     console.error('[6MonthCron] Fatal error in 6-month sales sync:', error);
     
-    // Log fatal error
-    await db.collection('takealotSyncLogs').add({
-      cronLabel: '6_month_sales',
-      error: error.message,
-      timestamp: admin.firestore.Timestamp.now(),
-      type: 'fatal_error',
-      processingTimeMs: Date.now() - startTime
-    });
+    // Complete centralized logging with error
+    if (executionId) {
+      await cronJobLogger.completeExecution(executionId, {
+        status: 'failure',
+        message: 'Fatal error in 6-month sales sync',
+        errorDetails: error.message,
+        stackTrace: error.stack
+      });
+    }
+    // Legacy logging removed - now using centralized logging system
 
     return NextResponse.json(
       { 

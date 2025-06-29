@@ -19,9 +19,9 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Integration not found' }, { status: 404 });
     }
 
-    // First, get total count of logs for this integration
+    // First, get total count of logs for this integration from centralized logging
     const totalSnapshot = await db
-      .collection('fetch_logs')
+      .collection('cronJobLogs')
       .where('integrationId', '==', integrationId)
       .get();
     

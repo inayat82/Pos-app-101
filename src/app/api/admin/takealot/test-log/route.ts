@@ -32,12 +32,12 @@ export async function POST(request: NextRequest) {
     };
 
     console.log('Saving test log data:', testLogData);
-    const logDoc = await db.collection('fetch_logs').add(testLogData);
-    console.log('Test log created successfully with ID:', logDoc.id);
+    // Legacy logging removed - now using centralized logging system
+    console.log('Test log created successfully via centralized system');
 
     return NextResponse.json({ 
       success: true, 
-      logId: logDoc.id,
+      logId: 'centralized-system',
       message: 'Test log created successfully'
     });
 

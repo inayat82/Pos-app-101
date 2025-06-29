@@ -1,6 +1,7 @@
 // src/app/api/admin/takealot/optimized-batch-fetch/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { dbAdmin as db } from '@/lib/firebase/firebaseAdmin';
+import { cronJobLogger } from '@/lib/cronJobLogger';
 
 const TAKEALOT_API_BASE = 'https://seller-api.takealot.com';
 
@@ -38,6 +39,8 @@ interface ProductRecord {
 }
 
 export async function POST(request: NextRequest) {
+  let logId: string | null = null;
+  
   try {
     console.log('Optimized Batch Takealot fetch endpoint called');
     
@@ -64,12 +67,24 @@ export async function POST(request: NextRequest) {
     
     const integrationData = integrationDoc.data();
     const apiKey = integrationData?.apiKey;
+    const adminId = integrationData?.adminId;
     
     if (!apiKey) {
       return NextResponse.json({ 
         error: 'API key not found for this integration' 
       }, { status: 400 });
     }
+
+    // Start logging the operation
+    logId = await cronJobLogger.logManualFetchEnhanced({
+      adminId: adminId || integrationId,
+      integrationId,
+      apiSource: 'Takealot API',
+      operation: `batch_${options.type}_fetch`,
+      status: 'success',
+      message: `Manual batch ${options.type} fetch started`,
+      details: `Batch ${options.type} fetch (${options.days ? options.days + ' days' : options.limit ? options.limit + ' records' : 'all'})`
+    });
 
     // Create streaming response for progress updates
     const encoder = new TextEncoder();
@@ -575,7 +590,7 @@ export async function POST(request: NextRequest) {
             }
           };
 
-          await db.collection('fetch_logs').add(logData);
+          // Legacy logging removed - now using centralized logging system
 
           // Send completion
           controller.enqueue(encoder.encode(`data: ${JSON.stringify({
@@ -602,6 +617,24 @@ export async function POST(request: NextRequest) {
             log: `Completed: ${totalNew} new, ${totalUpdated} updated, ${totalSkipped} unchanged, ${totalErrors} errors, ${totalPages} pages`
           })}\n\n`));
 
+          // Log completion
+          if (logId) {
+            await cronJobLogger.logManualFetchEnhanced({
+              adminId: adminId || integrationId,
+              integrationId,
+              apiSource: 'Takealot API',
+              operation: `batch_${options.type}_fetch`,
+              status: 'success',
+              message: `Batch ${options.type} fetch completed successfully`,
+              details: `Processed ${totalFetched} records: ${totalNew} new, ${totalUpdated} updated, ${totalSkipped} unchanged`,
+              totalPages,
+              totalReads: totalFetched,
+              totalWrites: totalNew + totalUpdated,
+              itemsProcessed: totalFetched,
+              duration: Date.now() - operationStartTime
+            });
+          }
+
         } catch (error: any) {
           console.error('Optimized batch fetch error:', error);
           
@@ -617,6 +650,25 @@ export async function POST(request: NextRequest) {
             errors: totalErrors + 1,
             log: `Error: ${error.message}`
           })}\n\n`));
+
+          // Log error
+          if (logId) {
+            await cronJobLogger.logManualFetchEnhanced({
+              adminId: adminId || integrationId,
+              integrationId,
+              apiSource: 'Takealot API',
+              operation: `batch_${options.type}_fetch`,
+              status: 'failure',
+              message: `Batch ${options.type} fetch failed`,
+              details: `Error after processing ${totalFetched} records`,
+              errorDetails: error.message,
+              totalPages,
+              totalReads: totalFetched,
+              totalWrites: totalNew + totalUpdated,
+              itemsProcessed: totalFetched,
+              duration: Date.now() - operationStartTime
+            });
+          }
         } finally {
           controller.close();
         }
@@ -633,6 +685,20 @@ export async function POST(request: NextRequest) {
 
   } catch (error: any) {
     console.error('Optimized batch fetch initialization error:', error);
+    
+    // Log initialization error
+    if (logId) {
+      await cronJobLogger.logManualFetchEnhanced({
+        adminId: 'unknown',
+        integrationId: 'unknown',
+        apiSource: 'Takealot API',
+        operation: 'batch_fetch_initialization',
+        status: 'failure',
+        message: 'Batch fetch initialization failed',
+        errorDetails: error.message,
+        duration: 0
+      });
+    }
     
     return NextResponse.json({ 
       success: false,

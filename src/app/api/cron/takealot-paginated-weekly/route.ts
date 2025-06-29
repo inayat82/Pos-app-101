@@ -2,6 +2,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createOrResumeSyncJob, processJobChunk, getActiveSyncJobs, cleanupOldJobs } from '@/lib/paginatedSyncService';
+import { cronJobLogger } from '@/lib/cronJobLogger';
 import admin from 'firebase-admin';
 
 // Initialize Firebase Admin SDK if not already initialized
@@ -28,6 +29,7 @@ const db = admin.firestore();
 
 export async function GET(request: NextRequest) {
   const startTime = Date.now();
+  let executionId: string | null = null;
   
   try {
     // Verify this is a cron request
@@ -37,6 +39,17 @@ export async function GET(request: NextRequest) {
     }
 
     console.log('[PaginatedCron] Starting paginated weekly Takealot sync');
+
+    // Start centralized logging
+    executionId = await cronJobLogger.startExecution({
+      cronJobName: 'takealot-paginated-weekly',
+      cronJobType: 'scheduled',
+      cronSchedule: '0 0 * * 0', // Weekly on Sunday (as per vercel.json)
+      apiSource: 'Takealot API',
+      triggerType: 'cron',
+      triggerSource: 'Vercel Cron',
+      message: 'Starting paginated weekly sync for all enabled integrations'
+    });
 
     // Clean up old completed jobs first
     const cleanedUpJobs = await cleanupOldJobs(7);
@@ -51,15 +64,7 @@ export async function GET(request: NextRequest) {
 
     if (integrationsSnapshot.empty) {
       console.log('[PaginatedCron] No enabled integrations found');
-      
-      // Log to sync logs
-      await db.collection('takealotSyncLogs').add({
-        cronLabel: 'paginated_weekly',
-        message: 'No enabled integrations found',
-        timestamp: admin.firestore.Timestamp.now(),
-        type: 'info',
-        processingTimeMs: Date.now() - startTime
-      });
+    // Legacy logging removed - now using centralized logging system
 
       return NextResponse.json({ 
         success: true, 
@@ -136,23 +141,7 @@ export async function GET(request: NextRequest) {
             ...chunkResult
           });
 
-          // Log chunk processing result
-          await db.collection('takealotSyncLogs').add({
-            integrationId,
-            adminId,
-            cronLabel: 'paginated_weekly',
-            dataType: config.dataType,
-            jobId,
-            currentPage,
-            itemsProcessed: chunkResult.itemsProcessed,
-            pagesProcessed: chunkResult.pagesProcessed,
-            reachedEnd: chunkResult.reachedEnd,
-            success: chunkResult.success,
-            message: chunkResult.errorMessage || `Processed ${chunkResult.pagesProcessed} pages, ${chunkResult.itemsProcessed} items`,
-            timestamp: admin.firestore.Timestamp.now(),
-            type: 'chunk_processed',
-            processingTimeMs: Date.now() - startTime
-          });
+          // Legacy logging removed - now using centralized logging system
 
         } catch (error: any) {
           console.error(`[PaginatedCron] Error processing ${config.dataType} for integration ${integrationId}:`, error);
@@ -162,18 +151,7 @@ export async function GET(request: NextRequest) {
             success: false,
             message: error.message
           });
-
-          // Log error
-          await db.collection('takealotSyncLogs').add({
-            integrationId,
-            adminId,
-            cronLabel: 'paginated_weekly',
-            dataType: config.dataType,
-            error: error.message,
-            timestamp: admin.firestore.Timestamp.now(),
-            type: 'error',
-            processingTimeMs: Date.now() - startTime
-          });
+    // Legacy logging removed - now using centralized logging system
         }
 
         // Add small delay between data types
@@ -207,26 +185,22 @@ export async function GET(request: NextRequest) {
     };
 
     const summaryMessage = `Paginated weekly sync completed: ${successful} successful, ${failed} failed, ${totalItemsProcessed} items processed, ${totalPagesProcessed} pages processed. Active jobs: ${activeJobs.length} (${activeJobsByType.products} products, ${activeJobsByType.sales} sales). Cleaned up ${cleanedUpJobs} old jobs.`;
-
-    // Log summary
-    await db.collection('takealotSyncLogs').add({
-      cronLabel: 'paginated_weekly',
-      message: summaryMessage,
-      totalIntegrations: results.length,
-      successfulIntegrations: successful,
-      failedIntegrations: failed,
-      totalItemsProcessed,
-      totalPagesProcessed,
-      activeJobs: activeJobs.length,
-      activeProductJobs: activeJobsByType.products,
-      activeSalesJobs: activeJobsByType.sales,
-      cleanedUpJobs,
-      timestamp: admin.firestore.Timestamp.now(),
-      type: 'summary',
-      processingTimeMs: Date.now() - startTime
-    });
+    // Legacy logging removed - now using centralized logging system
 
     console.log(`[PaginatedCron] ${summaryMessage}`);
+
+    // Complete centralized logging
+    if (executionId) {
+      await cronJobLogger.completeExecution(executionId, {
+        status: failed > 0 && successful === 0 ? 'failure' : 'success',
+        message: summaryMessage,
+        totalPages: totalPagesProcessed,
+        totalReads: totalPagesProcessed, // Each page is a read
+        totalWrites: totalItemsProcessed, // Each item processed is a write
+        itemsProcessed: totalItemsProcessed,
+        details: `Processed ${results.length} integrations: ${successful} successful, ${failed} failed. Active jobs: ${activeJobs.length}. Cleaned up: ${cleanedUpJobs} old jobs`
+      });
+    }
 
     return NextResponse.json({
       success: true,
@@ -250,14 +224,16 @@ export async function GET(request: NextRequest) {
   } catch (error: any) {
     console.error('[PaginatedCron] Fatal error in paginated weekly sync:', error);
     
-    // Log fatal error
-    await db.collection('takealotSyncLogs').add({
-      cronLabel: 'paginated_weekly',
-      error: error.message,
-      timestamp: admin.firestore.Timestamp.now(),
-      type: 'fatal_error',
-      processingTimeMs: Date.now() - startTime
-    });
+    // Complete centralized logging with error
+    if (executionId) {
+      await cronJobLogger.completeExecution(executionId, {
+        status: 'failure',
+        message: 'Fatal error in paginated weekly sync',
+        errorDetails: error.message,
+        stackTrace: error.stack
+      });
+    }
+    // Legacy logging removed - now using centralized logging system
 
     return NextResponse.json(
       { 

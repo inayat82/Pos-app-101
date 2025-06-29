@@ -2,6 +2,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { retrieveTakealotDataWithDuplicateManagement } from '@/lib/takealotDataManager';
+import { cronJobLogger } from '@/lib/cronJobLogger';
 import admin from 'firebase-admin';
 
 // Initialize Firebase Admin SDK if not already initialized
@@ -27,14 +28,34 @@ if (!admin.apps.length) {
 const db = admin.firestore();
 
 export async function GET(request: NextRequest) {
+  const logId = await cronJobLogger.startExecution({
+    cronJobName: 'takealot-robust-daily',
+    cronJobType: 'scheduled',
+    cronSchedule: '0 1 * * *', // Daily at 1 AM
+    triggerType: 'cron',
+    triggerSource: 'vercel-cron',
+    apiSource: 'Takealot API',
+    message: 'Starting daily Takealot data sync',
+    details: 'Daily sync for products and sales with moderate limits'
+  });
+
   try {
     // Verify this is a cron request
     const authHeader = request.headers.get('authorization');
     if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+      await cronJobLogger.completeExecution(logId, {
+        status: 'failure',
+        message: 'Unauthorized - Invalid cron secret',
+        errorDetails: 'Authentication failed'
+      });
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     console.log('[Cron] Starting robust daily Takealot sync');
+    await cronJobLogger.updateExecution(logId, {
+      status: 'running',
+      message: 'Fetching enabled integrations'
+    });
 
     const integrationsSnapshot = await db.collection('takealotIntegrations')
       .where('cronEnabled', '==', true)
@@ -42,6 +63,10 @@ export async function GET(request: NextRequest) {
 
     if (integrationsSnapshot.empty) {
       console.log('[Cron] No enabled integrations found');
+      await cronJobLogger.completeExecution(logId, {
+        status: 'success',
+        message: 'No enabled integrations found'
+      });
       return NextResponse.json({ 
         success: true, 
         message: 'No enabled integrations found',
@@ -115,14 +140,7 @@ export async function GET(request: NextRequest) {
         } catch (error: any) {
           console.error(`[Cron] Error processing integration ${integrationId}:`, error);
           
-          await db.collection('takealotSyncLogs').add({
-            integrationId,
-            adminId: integrationData.adminId,
-            cronLabel: 'daily',
-            error: error.message,
-            timestamp: admin.firestore.Timestamp.now(),
-            type: 'robust_sync_error'
-          });
+          // Legacy logging removed - now using centralized logging system
 
           return {
             integrationId,
@@ -147,17 +165,15 @@ export async function GET(request: NextRequest) {
     const failed = results.filter(r => !r.success).length;
     const totalNewRecords = results.reduce((sum, r) => sum + ((r as any).totalNewRecords || 0), 0);
     const totalDuplicates = results.reduce((sum, r) => sum + ((r as any).totalDuplicates || 0), 0);
+    // Legacy logging removed - now using centralized logging system
 
-    // Log summary
-    await db.collection('takealotSyncLogs').add({
-      cronLabel: 'daily',
-      totalIntegrations: results.length,
-      successfulIntegrations: successful,
-      failedIntegrations: failed,
-      totalNewRecords,
-      totalDuplicates,
-      timestamp: admin.firestore.Timestamp.now(),
-      type: 'robust_sync_summary'
+    // Complete centralized logging
+    await cronJobLogger.completeExecution(logId, {
+      status: successful === results.length ? 'success' : 'failure',
+      totalWrites: totalNewRecords,
+      itemsProcessed: totalNewRecords + totalDuplicates,
+      message: `Daily sync completed: ${successful} successful, ${failed} failed`,
+      details: `Records: ${totalNewRecords} new, ${totalDuplicates} duplicates found`
     });
 
     console.log(`[Cron] Daily sync completed: ${successful} successful, ${failed} failed, ${totalNewRecords} new records, ${totalDuplicates} duplicates`);
@@ -180,12 +196,14 @@ export async function GET(request: NextRequest) {
 
   } catch (error: any) {
     console.error('[Cron] Fatal error in daily sync:', error);
-    
-    await db.collection('takealotSyncLogs').add({
-      cronLabel: 'daily',
-      error: error.message,
-      timestamp: admin.firestore.Timestamp.now(),
-      type: 'robust_sync_fatal_error'
+    // Legacy logging removed - now using centralized logging system
+
+    // Complete centralized logging with error
+    await cronJobLogger.completeExecution(logId, {
+      status: 'failure',
+      message: 'Fatal error in daily sync',
+      errorDetails: error.message,
+      stackTrace: error.stack
     });
 
     return NextResponse.json(

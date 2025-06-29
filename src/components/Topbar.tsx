@@ -67,7 +67,12 @@ const Topbar: React.FC<TopbarProps> = ({ pageTitle }) => {
         {pageTitle && (
           <div className="hidden md:flex items-center">
             <span className="text-slate-400 mx-2">|</span>
-            <h1 className="text-lg font-medium text-slate-600">{pageTitle}</h1>
+            <div>
+              <h1 className="text-lg font-medium text-slate-600">{pageTitle.split(' - ')[0]}</h1>
+              {pageTitle.includes(' - ') && (
+                <p className="text-xs text-slate-500 -mt-1">{pageTitle.split(' - ')[1]}</p>
+              )}
+            </div>
           </div>
         )}
       </div>

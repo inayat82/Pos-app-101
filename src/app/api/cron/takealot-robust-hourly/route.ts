@@ -2,6 +2,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { retrieveTakealotDataWithDuplicateManagement } from '@/lib/takealotDataManager';
+import { cronJobLogger } from '@/lib/cronJobLogger';
 import admin from 'firebase-admin';
 
 // Initialize Firebase Admin SDK if not already initialized
@@ -27,14 +28,32 @@ if (!admin.apps.length) {
 const db = admin.firestore();
 
 export async function GET(request: NextRequest) {
+  let logId: string | null = null;
+  
   try {
     // Verify this is a cron request (in production, you should verify the cron secret)
     const authHeader = request.headers.get('authorization');
     if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+    
+    // Start system-wide logging without adminId initially
+    logId = await cronJobLogger.startExecution({
+      cronJobName: 'takealot-robust-hourly',
+      cronJobType: 'scheduled',
+      cronSchedule: '0 * * * *', // Every hour
+      triggerType: 'cron',
+      triggerSource: 'vercel-cron',
+      apiSource: 'Takealot API',
+      message: 'Starting hourly Takealot products sync - System-wide',
+      details: 'Hourly sync focused on product updates across all enabled integrations'
+    });
 
     console.log('[Cron] Starting robust hourly Takealot sync');
+    await cronJobLogger.updateExecution(logId, {
+      status: 'running',
+      message: 'Fetching enabled product integrations'
+    });
 
     // Get all active integrations with product cron enabled
     const integrationsSnapshot = await db.collection('takealotIntegrations')
@@ -44,6 +63,10 @@ export async function GET(request: NextRequest) {
 
     if (integrationsSnapshot.empty) {
       console.log('[Cron] No enabled product integrations found');
+      await cronJobLogger.completeExecution(logId, {
+        status: 'success',
+        message: 'No enabled product integrations found'
+      });
       return NextResponse.json({ 
         success: true, 
         message: 'No enabled product integrations found',
@@ -155,16 +178,7 @@ export async function GET(request: NextRequest) {
 
         } catch (error: any) {
           console.error(`[Cron] Error processing integration ${integrationId}:`, error);
-          
-          // Log error to Firestore
-          await db.collection('takealotSyncLogs').add({
-            integrationId,
-            adminId: integrationData.adminId,
-            cronLabel: 'hourly',
-            error: error.message,
-            timestamp: admin.firestore.Timestamp.now(),
-            type: 'robust_sync_error'
-          });
+    // Legacy logging removed - now using centralized logging system
 
           return {
             integrationId,
@@ -186,15 +200,17 @@ export async function GET(request: NextRequest) {
 
     const successful = results.filter(r => r.success).length;
     const failed = results.filter(r => !r.success).length;
+    const totalNewRecords = results.reduce((sum, r) => sum + ((r as any).newRecordsAdded || 0), 0);
+    const totalDuplicates = results.reduce((sum, r) => sum + ((r as any).duplicatesFound || 0), 0);
+    // Legacy logging removed - now using centralized logging system
 
-    // Log summary
-    await db.collection('takealotSyncLogs').add({
-      cronLabel: 'hourly',
-      totalIntegrations: results.length,
-      successfulIntegrations: successful,
-      failedIntegrations: failed,
-      timestamp: admin.firestore.Timestamp.now(),
-      type: 'robust_sync_summary'
+    // Complete centralized logging
+    await cronJobLogger.completeExecution(logId, {
+      status: successful === results.length ? 'success' : 'failure',
+      totalWrites: totalNewRecords,
+      itemsProcessed: totalNewRecords + totalDuplicates,
+      message: `Hourly sync completed: ${successful} successful, ${failed} failed`,
+      details: `Records: ${totalNewRecords} new, ${totalDuplicates} duplicates found`
     });
 
     console.log(`[Cron] Hourly sync completed: ${successful} successful, ${failed} failed`);
@@ -202,7 +218,10 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       success: true,
       message: `Hourly sync completed: ${successful} successful, ${failed} failed`,
-      processed: results.length,      results: results.map(r => ({
+      processed: results.length,
+      totalNewRecords,
+      totalDuplicates,
+      results: results.map(r => ({
         integrationId: r.integrationId,
         success: r.success,
         message: r.message,
@@ -213,14 +232,21 @@ export async function GET(request: NextRequest) {
 
   } catch (error: any) {
     console.error('[Cron] Fatal error in hourly sync:', error);
-    
-    // Log fatal error
-    await db.collection('takealotSyncLogs').add({
-      cronLabel: 'hourly',
-      error: error.message,
-      timestamp: admin.firestore.Timestamp.now(),
-      type: 'robust_sync_fatal_error'
-    });
+    // Legacy logging removed - now using centralized logging system
+
+    // Complete centralized logging with error (logId should be available here)
+    if (logId) {
+      try {
+        await cronJobLogger.completeExecution(logId, {
+          status: 'failure',
+          message: 'Fatal error in hourly sync',
+          errorDetails: error.message,
+          stackTrace: error.stack
+        });
+      } catch (logError) {
+        console.error('[Cron] Failed to log error:', logError);
+      }
+    }
 
     return NextResponse.json(
       { 

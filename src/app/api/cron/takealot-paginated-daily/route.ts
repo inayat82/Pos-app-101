@@ -2,6 +2,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createOrResumeSyncJob, processJobChunk, getActiveSyncJobs } from '@/lib/paginatedSyncService';
+import { cronJobLogger } from '@/lib/cronJobLogger';
 import admin from 'firebase-admin';
 
 // Initialize Firebase Admin SDK if not already initialized
@@ -28,6 +29,7 @@ const db = admin.firestore();
 
 export async function GET(request: NextRequest) {
   const startTime = Date.now();
+  let executionId: string | null = null;
   
   try {
     // Verify this is a cron request
@@ -38,6 +40,36 @@ export async function GET(request: NextRequest) {
 
     console.log('[PaginatedCron] Starting paginated daily Takealot sync');
 
+    // First run automatic log cleanup (7-day retention)
+    try {
+      console.log('[PaginatedCron] Running automatic log cleanup...');
+      const cleanupResponse = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3001'}/api/cron/cleanup-old-logs`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': request.headers.get('authorization') || ''
+        }
+      });
+      
+      if (cleanupResponse.ok) {
+        const cleanupResult = await cleanupResponse.json();
+        console.log(`[PaginatedCron] Cleanup completed: ${cleanupResult.deletedCount} old logs deleted`);
+      }
+    } catch (cleanupError) {
+      console.warn('[PaginatedCron] Log cleanup failed:', cleanupError);
+    }
+
+    // Start centralized logging
+    executionId = await cronJobLogger.startExecution({
+      cronJobName: 'Takealot Paginated Daily Sync',
+      cronJobType: 'scheduled',
+      cronSchedule: '0 */2 * * *',
+      apiSource: 'Takealot API',
+      triggerType: 'cron',
+      triggerSource: 'Vercel Cron',
+      message: 'Starting paginated daily sync for all enabled integrations'
+    });
+
     // Get enabled integrations
     const integrationsSnapshot = await db.collection('takealotIntegrations')
       .where('cronEnabled', '==', true)
@@ -46,19 +78,20 @@ export async function GET(request: NextRequest) {
     if (integrationsSnapshot.empty) {
       console.log('[PaginatedCron] No enabled integrations found');
       
-      // Log to sync logs
-      await db.collection('takealotSyncLogs').add({
-        cronLabel: 'paginated_daily',
-        message: 'No enabled integrations found',
-        timestamp: admin.firestore.Timestamp.now(),
-        type: 'info',
-        processingTimeMs: Date.now() - startTime
-      });
+      // Complete execution with no data status
+      if (executionId) {
+        await cronJobLogger.completeExecution(executionId, {
+          status: 'success',
+          message: 'No enabled integrations found',
+          details: 'No Takealot integrations have cron enabled'
+        });
+      }
 
       return NextResponse.json({ 
         success: true, 
         message: 'No enabled integrations found',
-        processed: 0
+        processed: 0,
+        executionId
       });
     }
 
@@ -130,23 +163,7 @@ export async function GET(request: NextRequest) {
             ...chunkResult
           });
 
-          // Log chunk processing result
-          await db.collection('takealotSyncLogs').add({
-            integrationId,
-            adminId,
-            cronLabel: 'paginated_daily',
-            dataType: config.dataType,
-            jobId,
-            currentPage,
-            itemsProcessed: chunkResult.itemsProcessed,
-            pagesProcessed: chunkResult.pagesProcessed,
-            reachedEnd: chunkResult.reachedEnd,
-            success: chunkResult.success,
-            message: chunkResult.errorMessage || `Processed ${chunkResult.pagesProcessed} pages, ${chunkResult.itemsProcessed} items`,
-            timestamp: admin.firestore.Timestamp.now(),
-            type: 'chunk_processed',
-            processingTimeMs: Date.now() - startTime
-          });
+          // Chunk processing result is now logged via centralized logging system
 
         } catch (error: any) {
           console.error(`[PaginatedCron] Error processing ${config.dataType} for integration ${integrationId}:`, error);
@@ -157,17 +174,7 @@ export async function GET(request: NextRequest) {
             message: error.message
           });
 
-          // Log error
-          await db.collection('takealotSyncLogs').add({
-            integrationId,
-            adminId,
-            cronLabel: 'paginated_daily',
-            dataType: config.dataType,
-            error: error.message,
-            timestamp: admin.firestore.Timestamp.now(),
-            type: 'error',
-            processingTimeMs: Date.now() - startTime
-          });
+          // Error is now logged via centralized logging system
         }
 
         // Add small delay between data types
@@ -202,24 +209,22 @@ export async function GET(request: NextRequest) {
 
     const summaryMessage = `Paginated daily sync completed: ${successful} successful, ${failed} failed, ${totalItemsProcessed} items processed, ${totalPagesProcessed} pages processed. Active jobs: ${activeJobs.length} (${activeJobsByType.products} products, ${activeJobsByType.sales} sales)`;
 
-    // Log summary
-    await db.collection('takealotSyncLogs').add({
-      cronLabel: 'paginated_daily',
-      message: summaryMessage,
-      totalIntegrations: results.length,
-      successfulIntegrations: successful,
-      failedIntegrations: failed,
-      totalItemsProcessed,
-      totalPagesProcessed,
-      activeJobs: activeJobs.length,
-      activeProductJobs: activeJobsByType.products,
-      activeSalesJobs: activeJobsByType.sales,
-      timestamp: admin.firestore.Timestamp.now(),
-      type: 'summary',
-      processingTimeMs: Date.now() - startTime
-    });
+    // Summary is now logged via centralized logging system
 
     console.log(`[PaginatedCron] ${summaryMessage}`);
+
+    // Complete successful execution with new logging system
+    if (executionId) {
+      await cronJobLogger.completeExecution(executionId, {
+        status: 'success',
+        totalPages: totalPagesProcessed,
+        totalReads: totalItemsProcessed,
+        totalWrites: totalItemsProcessed,
+        itemsProcessed: totalItemsProcessed,
+        message: summaryMessage,
+        details: `Processed ${results.length} integrations (${successful} successful, ${failed} failed) with ${activeJobs.length} active jobs remaining`
+      });
+    }
 
     return NextResponse.json({
       success: true,
@@ -236,27 +241,32 @@ export async function GET(request: NextRequest) {
         itemsProcessed: r.totalItemsProcessed || 0,
         pagesProcessed: r.totalPagesProcessed || 0
       })),
-      processingTimeMs: Date.now() - startTime
+      processingTimeMs: Date.now() - startTime,
+      executionId
     });
 
   } catch (error: any) {
     console.error('[PaginatedCron] Fatal error in paginated daily sync:', error);
     
-    // Log fatal error
-    await db.collection('takealotSyncLogs').add({
-      cronLabel: 'paginated_daily',
-      error: error.message,
-      timestamp: admin.firestore.Timestamp.now(),
-      type: 'fatal_error',
-      processingTimeMs: Date.now() - startTime
-    });
+    // Fatal error is now logged via centralized logging system
+
+    // Complete failed execution with new logging system
+    if (executionId) {
+      await cronJobLogger.completeExecution(executionId, {
+        status: 'failure',
+        message: 'Fatal error during paginated daily sync',
+        errorDetails: error.message,
+        stackTrace: error.stack
+      });
+    }
 
     return NextResponse.json(
       { 
         success: false, 
         error: 'Internal server error',
         message: error.message,
-        processingTimeMs: Date.now() - startTime
+        processingTimeMs: Date.now() - startTime,
+        executionId
       },
       { status: 500 }
     );

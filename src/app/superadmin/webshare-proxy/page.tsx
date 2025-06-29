@@ -1,17 +1,12 @@
-// src/app/superadmin/webshare-proxy/page.tsx
-"use client";
-import React from 'react';
+'use client';
 
-const SuperAdminWebshareProxyPage = () => {
+import React from 'react';
+import WebshareProxyManagerNew from '@/components/superadmin/WebshareProxyManagerNew';
+
+export default function WebshareProxyPage() {
   return (
-    <div>
-      <h1 className="text-2xl font-semibold text-gray-800 mb-6">Webshare Proxy Configuration</h1>
-      <div className="bg-white p-6 rounded-lg shadow-md">
-        <p className="text-gray-600">Webshare Proxy configuration interface will be here. Content coming soon.</p>
-        {/* Placeholder for Webshare Proxy settings */}
-      </div>
+    <div className="container mx-auto px-4 py-4">
+      <WebshareProxyManagerNew />
     </div>
   );
-};
-
-export default SuperAdminWebshareProxyPage;
+}

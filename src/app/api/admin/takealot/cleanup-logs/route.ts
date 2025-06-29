@@ -11,9 +11,9 @@ export async function POST(request: NextRequest) {  try {
 
     console.log('Cleaning up logs for integration:', integrationId, clearAll ? '(ALL LOGS)' : '(DUMMY LOGS ONLY)');
 
-    // Query all logs for this integration
+    // Query all logs for this integration from centralized logging
     const logsSnapshot = await db
-      .collection('fetch_logs')
+      .collection('cronJobLogs')
       .where('integrationId', '==', integrationId)
       .get();
 
