@@ -57,18 +57,48 @@ const APICallLogsCard: React.FC<APICallLogsCardProps> = ({
     setIsLoadingLogs(true);
     try {
       console.log(`Loading API logs for integration: ${integrationId}, page: ${page}`);
-      const response = await fetch(`/api/admin/takealot/fetch-logs?integrationId=${integrationId}&limit=${logsPerPage}&page=${page}`);
+      
+      // For now, let's use the SuperAdmin API as a workaround to get logs
+      const response = await fetch(`/api/superadmin/cron-job-logs?limit=${logsPerPage}&offset=${(page - 1) * logsPerPage}`);
       
       console.log('Fetch logs response status:', response.status);
       
       if (response.ok) {
         const data = await response.json();
         console.log('Fetch logs response data:', data);
-        setApiLogs(data.logs || []);
-        setTotalLogs(data.total || 0);
-        setTotalPages(data.totalPages || 1);
-        setCurrentPage(data.currentPage || page);
-        console.log(`Loaded ${data.logs?.length || 0} API logs (page ${data.currentPage || page} of ${data.totalPages || 1})`);
+        
+        // Filter logs for this integration (since SuperAdmin API returns all logs)
+        const filteredLogs = data.logs?.filter((log: any) => 
+          log.integrationId === integrationId || 
+          (log.adminId && integrationId.includes(log.adminId)) ||
+          log.cronJobName?.includes('sales') || log.cronJobName?.includes('product')
+        ).map((log: any) => ({
+          // Map SuperAdmin API fields to component expected fields
+          id: log.id,
+          createdAt: log.createdAt || log.timestamp,
+          operation: log.cronJobName?.replace(/-/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()) || 'Manual Sync',
+          trigger: log.triggerType === 'manual' ? 'Manual' : 
+                  log.triggerType === 'cron' ? 'Automated' : 'Unknown',
+          type: log.cronJobName?.includes('sales') ? 'sales' : 
+                log.cronJobName?.includes('product') ? 'products' : 'sync',
+          recordsFetched: log.totalReads || 0,
+          totalRecords: log.totalReads || 0,
+          recordsSaved: log.totalWrites || 0,
+          recordsUpdated: log.totalWrites || 0,
+          newRecords: log.totalWrites || 0,
+          duration: log.duration || 0,
+          status: log.status === 'success' ? 'completed' : 
+                 log.status === 'failure' ? 'failed' : 
+                 log.status || 'unknown'
+        })) || [];
+        
+        console.log(`Filtered ${filteredLogs.length} logs for integration ${integrationId}`);
+        
+        setApiLogs(filteredLogs);
+        setTotalLogs(filteredLogs.length);
+        setTotalPages(Math.ceil(filteredLogs.length / logsPerPage));
+        setCurrentPage(page);
+        console.log(`Loaded ${filteredLogs.length} API logs (page ${page})`);
       } else {
         const errorText = await response.text();
         console.error('Failed to load API logs:', response.status, errorText);

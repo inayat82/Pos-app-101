@@ -1,4 +1,4 @@
-// src/app/api/cron/takealot-hourly-30day-sales/route.ts
+// src/app/api/cron/takealot-nightly-sales/route.ts
 
 import { NextRequest, NextResponse } from 'next/server';
 import { SalesSyncService } from '@/lib/salesSyncService';
@@ -17,19 +17,19 @@ export async function GET(request: NextRequest) {
     
     // Start system-wide logging
     logId = await cronJobLogger.startExecution({
-      cronJobName: 'takealot-hourly-30day-sales',
+      cronJobName: 'takealot-nightly-sales',
       cronJobType: 'scheduled',
-      cronSchedule: '0 * * * *', // Every hour
+      cronSchedule: '0 2 * * *', // Every night at 2 AM
       triggerType: 'cron',
       triggerSource: 'vercel-cron',
       apiSource: 'Takealot API',
-      message: 'Starting hourly 30-day sales sync - System-wide',
+      message: 'Starting nightly 30-day sales sync - System-wide',
       details: 'Automated sync for Last 30 Days sales strategy across all enabled integrations'
     });
 
-    console.log('[HourlySalesCron] Starting hourly 30-day sales sync');
+    console.log('[NightlySalesCron] Starting nightly 30-day sales sync');
     
-    // Get integrations with hourly sales sync enabled
+    // Get integrations with nightly sales sync enabled
     const integrationsSnapshot = await db.collection('takealotIntegrations').get();
     const results = [];
     let totalItemsProcessed = 0;
@@ -41,11 +41,11 @@ export async function GET(request: NextRequest) {
       const apiKey = integrationData.apiKey;
 
       if (!apiKey) {
-        console.warn(`[HourlySalesCron] No API key for integration ${integrationId}, skipping`);
+        console.warn(`[NightlySalesCron] No API key for integration ${integrationId}, skipping`);
         continue;
       }
 
-      // Check if this integration has the hourly 30-day sales strategy enabled
+      // Check if this integration has the nightly 30-day sales strategy enabled
       try {
         const syncPrefsDoc = await db.collection(`takealotIntegrations/${integrationId}/syncPreferences`).doc('sales').get();
         if (!syncPrefsDoc.exists) continue;
@@ -53,17 +53,17 @@ export async function GET(request: NextRequest) {
         const syncPrefs = syncPrefsDoc.data();
         const strategies = syncPrefs?.strategies || [];
         
-        // Find the "Last 30 Days" strategy and check if it's enabled with hourly schedule
+        // Find the "Last 30 Days" strategy and check if it's enabled with nightly schedule
         const thirtyDayStrategy = strategies.find((s: any) => 
-          s.id === 'sls_30d' && s.cronEnabled && s.cronLabel === 'Every 1 hr'
+          s.id === 'sls_30d' && s.cronEnabled && s.cronLabel === 'Every Night'
         );
         
         if (!thirtyDayStrategy) {
-          console.log(`[HourlySalesCron] 30-day hourly strategy not enabled for integration ${integrationId}`);
+          console.log(`[NightlySalesCron] 30-day nightly strategy not enabled for integration ${integrationId}`);
           continue;
         }
 
-        console.log(`[HourlySalesCron] Processing 30-day sales for integration ${integrationId}`);
+        console.log(`[NightlySalesCron] Processing 30-day sales for integration ${integrationId}`);
 
         // Use the new sales sync service
         const syncService = new SalesSyncService(integrationId);
@@ -82,7 +82,7 @@ export async function GET(request: NextRequest) {
         totalItemsProcessed += result.totalProcessed;
         
       } catch (error: any) {
-        console.error(`[HourlySalesCron] Error processing integration ${integrationId}:`, error);
+        console.error(`[NightlySalesCron] Error processing integration ${integrationId}:`, error);
         results.push({
           integrationId,
           adminId,
@@ -92,14 +92,14 @@ export async function GET(request: NextRequest) {
       }
 
       // Add delay between integrations
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise(resolve => setTimeout(resolve, 2000));
     }
 
     const successful = results.filter(r => r.success).length;
     const failed = results.filter(r => !r.success).length;
-    const summaryMessage = `Hourly 30-day sales sync completed: ${successful} successful, ${failed} failed, ${totalItemsProcessed} total items processed`;
+    const summaryMessage = `Nightly 30-day sales sync completed: ${successful} successful, ${failed} failed, ${totalItemsProcessed} total items processed`;
 
-    console.log(`[HourlySalesCron] ${summaryMessage}`);
+    console.log(`[NightlySalesCron] ${summaryMessage}`);
 
     // Complete centralized logging
     if (logId) {
@@ -128,13 +128,13 @@ export async function GET(request: NextRequest) {
     });
 
   } catch (error: any) {
-    console.error('[HourlySalesCron] Fatal error in hourly 30-day sales sync:', error);
+    console.error('[NightlySalesCron] Fatal error in nightly 30-day sales sync:', error);
     
     // Complete centralized logging with error
     if (logId) {
       await cronJobLogger.completeExecution(logId, {
         status: 'failure',
-        message: 'Fatal error in hourly 30-day sales sync',
+        message: 'Fatal error in nightly 30-day sales sync',
         errorDetails: error.message,
         stackTrace: error.stack
       });

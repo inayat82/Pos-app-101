@@ -1,4 +1,4 @@
-// src/app/api/cron/takealot-hourly-30day-sales/route.ts
+// src/app/api/cron/takealot-weekly-6month-sales/route.ts
 
 import { NextRequest, NextResponse } from 'next/server';
 import { SalesSyncService } from '@/lib/salesSyncService';
@@ -17,19 +17,19 @@ export async function GET(request: NextRequest) {
     
     // Start system-wide logging
     logId = await cronJobLogger.startExecution({
-      cronJobName: 'takealot-hourly-30day-sales',
+      cronJobName: 'takealot-weekly-6month-sales',
       cronJobType: 'scheduled',
-      cronSchedule: '0 * * * *', // Every hour
+      cronSchedule: '0 3 * * 0', // Every Sunday at 3 AM
       triggerType: 'cron',
       triggerSource: 'vercel-cron',
       apiSource: 'Takealot API',
-      message: 'Starting hourly 30-day sales sync - System-wide',
-      details: 'Automated sync for Last 30 Days sales strategy across all enabled integrations'
+      message: 'Starting weekly 6-month sales sync - System-wide',
+      details: 'Automated sync for Last 6 Months sales strategy across all enabled integrations'
     });
 
-    console.log('[HourlySalesCron] Starting hourly 30-day sales sync');
+    console.log('[WeeklySalesCron] Starting weekly 6-month sales sync');
     
-    // Get integrations with hourly sales sync enabled
+    // Get integrations with weekly 6-month sales sync enabled
     const integrationsSnapshot = await db.collection('takealotIntegrations').get();
     const results = [];
     let totalItemsProcessed = 0;
@@ -41,11 +41,11 @@ export async function GET(request: NextRequest) {
       const apiKey = integrationData.apiKey;
 
       if (!apiKey) {
-        console.warn(`[HourlySalesCron] No API key for integration ${integrationId}, skipping`);
+        console.warn(`[WeeklySalesCron] No API key for integration ${integrationId}, skipping`);
         continue;
       }
 
-      // Check if this integration has the hourly 30-day sales strategy enabled
+      // Check if this integration has the weekly 6-month sales strategy enabled
       try {
         const syncPrefsDoc = await db.collection(`takealotIntegrations/${integrationId}/syncPreferences`).doc('sales').get();
         if (!syncPrefsDoc.exists) continue;
@@ -53,21 +53,21 @@ export async function GET(request: NextRequest) {
         const syncPrefs = syncPrefsDoc.data();
         const strategies = syncPrefs?.strategies || [];
         
-        // Find the "Last 30 Days" strategy and check if it's enabled with hourly schedule
-        const thirtyDayStrategy = strategies.find((s: any) => 
-          s.id === 'sls_30d' && s.cronEnabled && s.cronLabel === 'Every 1 hr'
+        // Find the "Last 6 Months" strategy and check if it's enabled with weekly schedule
+        const sixMonthStrategy = strategies.find((s: any) => 
+          s.id === 'sls_6m' && s.cronEnabled && s.cronLabel === 'Every Sunday'
         );
         
-        if (!thirtyDayStrategy) {
-          console.log(`[HourlySalesCron] 30-day hourly strategy not enabled for integration ${integrationId}`);
+        if (!sixMonthStrategy) {
+          console.log(`[WeeklySalesCron] 6-month weekly strategy not enabled for integration ${integrationId}`);
           continue;
         }
 
-        console.log(`[HourlySalesCron] Processing 30-day sales for integration ${integrationId}`);
+        console.log(`[WeeklySalesCron] Processing 6-month sales for integration ${integrationId}`);
 
         // Use the new sales sync service
         const syncService = new SalesSyncService(integrationId);
-        const result = await syncService.syncSales(apiKey, 'Last 30 Days', 'cron', adminId);
+        const result = await syncService.syncSales(apiKey, 'Last 6 Months', 'cron', adminId);
         
         results.push({
           integrationId,
@@ -82,7 +82,7 @@ export async function GET(request: NextRequest) {
         totalItemsProcessed += result.totalProcessed;
         
       } catch (error: any) {
-        console.error(`[HourlySalesCron] Error processing integration ${integrationId}:`, error);
+        console.error(`[WeeklySalesCron] Error processing integration ${integrationId}:`, error);
         results.push({
           integrationId,
           adminId,
@@ -91,15 +91,15 @@ export async function GET(request: NextRequest) {
         });
       }
 
-      // Add delay between integrations
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Add delay between integrations (longer delay for 6-month sync)
+      await new Promise(resolve => setTimeout(resolve, 5000));
     }
 
     const successful = results.filter(r => r.success).length;
     const failed = results.filter(r => !r.success).length;
-    const summaryMessage = `Hourly 30-day sales sync completed: ${successful} successful, ${failed} failed, ${totalItemsProcessed} total items processed`;
+    const summaryMessage = `Weekly 6-month sales sync completed: ${successful} successful, ${failed} failed, ${totalItemsProcessed} total items processed`;
 
-    console.log(`[HourlySalesCron] ${summaryMessage}`);
+    console.log(`[WeeklySalesCron] ${summaryMessage}`);
 
     // Complete centralized logging
     if (logId) {
@@ -128,13 +128,13 @@ export async function GET(request: NextRequest) {
     });
 
   } catch (error: any) {
-    console.error('[HourlySalesCron] Fatal error in hourly 30-day sales sync:', error);
+    console.error('[WeeklySalesCron] Fatal error in weekly 6-month sales sync:', error);
     
     // Complete centralized logging with error
     if (logId) {
       await cronJobLogger.completeExecution(logId, {
         status: 'failure',
-        message: 'Fatal error in hourly 30-day sales sync',
+        message: 'Fatal error in weekly 6-month sales sync',
         errorDetails: error.message,
         stackTrace: error.stack
       });

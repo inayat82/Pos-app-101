@@ -349,7 +349,7 @@ const SyncStrategyPreferencesCard: React.FC<SyncStrategyPreferencesCardProps> = 
     }
   };
 
-  // Handle fetch operation using the same API endpoints as the original settings page
+  // Handle fetch operation with new sync services for both sales and products
   const handleFetchOperation = async (strategyId: string, strategyDescription: string, type: 'sales' | 'products') => {
     if (!integrationId) {
       showMessage('error', 'Integration ID is missing.');
@@ -362,9 +362,9 @@ const SyncStrategyPreferencesCard: React.FC<SyncStrategyPreferencesCardProps> = 
       ...prev,
       [operationKey]: {
         isRunning: true,
-        progress: 0,
-        message: 'Starting fetch operation...',
-        logs: [`Starting ${strategyDescription} fetch...`],
+        progress: 10,
+        message: 'Starting sync operation...',
+        logs: [`Starting ${strategyDescription} sync...`],
         totalFetched: 0,
         totalSaved: 0,
         totalUpdated: 0,
@@ -373,129 +373,16 @@ const SyncStrategyPreferencesCard: React.FC<SyncStrategyPreferencesCardProps> = 
     }));
 
     try {
-      // Determine fetch options based on strategy
-      let fetchOptions: any = {
-        type,
-        verifyExisting: true
-      };
-
-      // Configure options based on strategy
-      switch (strategyId) {
-        case 'sls_100':
-        case 'prd_100_3h':
-          fetchOptions.limit = 100;
-          break;
-        case 'prd_200_man':
-          fetchOptions.limit = 200;
-          break;
-        case 'sls_30d':
-          fetchOptions.days = 30;
-          fetchOptions.batchSize = 10;
-          break;
-        case 'sls_6m':
-          fetchOptions.days = 180;
-          fetchOptions.batchSize = 15;
-          break;
-        case 'sls_all':
-          fetchOptions.batchSize = 20;
-          break;
-        case 'prd_all_6h':
-        case 'prd_all_12h':
-          fetchOptions.batchSize = 15;
-          break;
+      if (type === 'sales') {
+        // Use new sales sync service
+        await handleSalesSync(strategyId, strategyDescription, operationKey);
+      } else {
+        // Use new product sync service with TSIN-based upsert
+        await handleProductSync(strategyId, strategyDescription, operationKey);
       }
-
-      // Choose the appropriate endpoint (same as original settings page)
-      const endpoint = fetchOptions.batchSize 
-        ? '/api/admin/takealot/optimized-batch-fetch'
-        : '/api/admin/takealot/optimized-fetch-100';
-
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          integrationId,
-          options: fetchOptions
-        }),
-      });
-
-      if (!response.body) {
-        throw new Error('No response body received');
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        const chunk = decoder.decode(value);
-        const lines = chunk.split('\n');
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.substring(6));
-              
-              setFetchOperations(prev => ({
-                ...prev,
-                [operationKey]: {
-                  isRunning: !data.completed,
-                  progress: data.progress || 0,
-                  message: data.message || 'Processing...',
-                  logs: [...(prev[operationKey]?.logs || []), data.log || data.message].slice(-10),
-                  totalFetched: data.summary?.fetchedFromAPI || data.totalFetched || 0,
-                  totalSaved: data.totalNew || 0,
-                  totalUpdated: data.totalUpdated || 0,
-                  newRecords: data.totalNew || 0
-                }
-              }));
-
-              if (data.completed) {
-                if (data.error) {
-                  showMessage('error', `Fetch failed: ${data.message}`);
-                  saveSyncStatus(strategyId, {
-                    totalFetched: data.summary?.fetchedFromAPI || data.totalFetched || 0,
-                    totalSaved: data.totalNew || 0,
-                    totalUpdated: data.totalUpdated || 0,
-                    newRecords: data.totalNew || 0,
-                    totalPages: data.pages || data.summary?.pages || 1,
-                    status: 'error'
-                  });
-                } else {
-                  const message = `${strategyDescription} completed! ${data.totalNew || 0} new, ${data.totalUpdated || 0} updated, ${data.totalSkipped || 0} unchanged${data.pages ? ` (${data.pages} pages)` : ''}`;
-                  showMessage('success', message);
-                  
-                  saveSyncStatus(strategyId, {
-                    totalFetched: data.summary?.fetchedFromAPI || data.totalFetched || 0,
-                    totalSaved: data.totalNew || 0,
-                    totalUpdated: data.totalUpdated || 0,
-                    newRecords: data.totalNew || 0,
-                    totalPages: data.pages || data.summary?.pages || 1,
-                    status: 'success'
-                  });
-                  
-                  // Reload API logs and sync status data
-                  setTimeout(() => {
-                    if (loadApiLogs) loadApiLogs();
-                    loadSyncStatusData();
-                  }, 1000);
-                }
-                break;
-              }
-            } catch (error) {
-              console.error('Error parsing fetch data:', error);
-            }
-          }
-        }
-      }
-
     } catch (error: any) {
-      console.error('Fetch operation error:', error);
-      showMessage('error', `Fetch operation failed: ${error.message}`);
+      console.error('Sync operation error:', error);
+      showMessage('error', `Sync operation failed: ${error.message}`);
       
       setFetchOperations(prev => ({
         ...prev,
@@ -510,6 +397,227 @@ const SyncStrategyPreferencesCard: React.FC<SyncStrategyPreferencesCardProps> = 
           newRecords: 0
         }
       }));
+    }
+  };
+
+  // New sales sync handler using the salesSyncService
+  const handleSalesSync = async (strategyId: string, strategyDescription: string, operationKey: string) => {
+    try {
+      // Update progress
+      setFetchOperations(prev => ({
+        ...prev,
+        [operationKey]: {
+          ...prev[operationKey],
+          progress: 20,
+          message: 'Fetching sales data from API...',
+          logs: [...(prev[operationKey]?.logs || []), 'Connected to Takealot API']
+        }
+      }));
+
+      // Call the API endpoint to handle sales sync (which uses the new SalesSyncService)
+      const response = await fetch('/api/admin/takealot/manual-sales-sync', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          integrationId,
+          strategy: strategyDescription,
+          adminId: currentUser?.uid
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`API request failed: ${response.status} ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      
+      if (!result.success) {
+        throw new Error(result.error || 'Sales sync failed');
+      }
+
+      // Update progress
+      setFetchOperations(prev => ({
+        ...prev,
+        [operationKey]: {
+          ...prev[operationKey],
+          progress: 50,
+          message: 'Processing sales records...',
+          logs: [...(prev[operationKey]?.logs || []), 'Processing sales data with order_id matching']
+        }
+      }));
+
+      // Update final progress
+      setFetchOperations(prev => ({
+        ...prev,
+        [operationKey]: {
+          ...prev[operationKey],
+          isRunning: false,
+          progress: 100,
+          message: 'Sales sync completed successfully!',
+          logs: [...(prev[operationKey]?.logs || []), `Completed: ${result.totalNew} new, ${result.totalUpdated} updated`],
+          totalFetched: result.totalProcessed,
+          totalSaved: result.totalNew,
+          totalUpdated: result.totalUpdated,
+          newRecords: result.totalNew
+        }
+      }));
+
+      // Show success message
+      const message = `${strategyDescription} completed! ${result.totalNew} new, ${result.totalUpdated} updated, ${result.totalSkipped} unchanged`;
+      showMessage('success', message);
+      
+      // Save sync status  
+      saveSyncStatus(strategyId, {
+        totalFetched: result.totalProcessed,
+        totalSaved: result.totalNew,
+        totalUpdated: result.totalUpdated,
+        newRecords: result.totalNew,
+        totalPages: Math.ceil(result.totalProcessed / 100),
+        status: 'success'
+      });
+      
+      // Reload data
+      setTimeout(() => {
+        if (loadApiLogs) loadApiLogs();
+        loadSyncStatusData();
+      }, 1000);
+
+    } catch (error: any) {
+      console.error('Sales sync error:', error);
+      throw error;
+    }
+  };
+
+  // Product sync using ProductSyncService
+  const handleProductSync = async (strategyId: string, strategyDescription: string, operationKey: string) => {
+    try {
+      setFetchOperations(prev => ({
+        ...prev,
+        [operationKey]: {
+          isRunning: true,
+          progress: 0,
+          message: 'Starting product sync...',
+          logs: [`Starting ${strategyDescription} sync...`],
+          totalFetched: 0,
+          totalSaved: 0,
+          totalUpdated: 0,
+          newRecords: 0
+        }
+      }));
+
+      // Map strategy IDs to strategy names
+      let strategy = '';
+      switch (strategyId) {
+        case 'prd_100_3h':
+          strategy = 'Fetch 100 Products';
+          break;
+        case 'prd_200_man':
+          strategy = 'Fetch 200 Products';
+          break;
+        case 'prd_all_6h':
+          strategy = 'Fetch All Products (6h)';
+          break;
+        case 'prd_all_12h':
+          strategy = 'Fetch All Products (12h)';
+          break;
+        default:
+          throw new Error(`Unknown product strategy: ${strategyId}`);
+      }
+
+      setFetchOperations(prev => ({
+        ...prev,
+        [operationKey]: {
+          ...prev[operationKey],
+          progress: 20,
+          message: 'Connecting to API...',
+          logs: [...(prev[operationKey]?.logs || []), 'Using ProductSyncService for TSIN-based upsert']
+        }
+      }));
+
+      // Call the new product sync API
+      const response = await fetch('/api/admin/takealot/manual-product-sync', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          integrationId,
+          strategy
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!result.success) {
+        throw new Error(result.error || 'Product sync failed');
+      }
+
+      // Update UI with results
+      const syncResult = result.result;
+      setFetchOperations(prev => ({
+        ...prev,
+        [operationKey]: {
+          isRunning: false,
+          progress: 100,
+          message: `Completed: ${syncResult.totalNew} new, ${syncResult.totalUpdated} updated`,
+          logs: [...(prev[operationKey]?.logs || []), `Completed: ${syncResult.totalProcessed} processed, ${syncResult.totalNew} new, ${syncResult.totalUpdated} updated, ${syncResult.totalSkipped} unchanged, ${syncResult.totalErrors} errors`],
+          totalFetched: syncResult.totalProcessed,
+          totalSaved: syncResult.totalNew,
+          totalUpdated: syncResult.totalUpdated,
+          newRecords: syncResult.totalNew
+        }
+      }));
+
+      const message = `${strategyDescription} completed! ${syncResult.totalNew} new, ${syncResult.totalUpdated} updated, ${syncResult.totalSkipped} unchanged (TSIN-based upsert)`;
+      showMessage('success', message);
+      
+      // Save sync status
+      saveSyncStatus(strategyId, {
+        totalFetched: syncResult.totalProcessed,
+        totalSaved: syncResult.totalNew,
+        totalUpdated: syncResult.totalUpdated,
+        newRecords: syncResult.totalNew,
+        totalPages: Math.ceil(syncResult.totalProcessed / 100) || 1,
+        status: 'success'
+      });
+      
+      // Reload data
+      setTimeout(() => {
+        if (loadApiLogs) loadApiLogs();
+        loadSyncStatusData();
+      }, 1000);
+
+    } catch (error: any) {
+      console.error('Product sync error:', error);
+      
+      setFetchOperations(prev => ({
+        ...prev,
+        [operationKey]: {
+          isRunning: false,
+          progress: 0,
+          message: `Error: ${error.message}`,
+          logs: [...(prev[operationKey]?.logs || []), `Error: ${error.message}`],
+          totalFetched: 0,
+          totalSaved: 0,
+          totalUpdated: 0,
+          newRecords: 0
+        }
+      }));
+
+      showMessage('error', `Product sync failed: ${error.message}`);
+      
+      saveSyncStatus(strategyId, {
+        totalFetched: 0,
+        totalSaved: 0,
+        totalUpdated: 0,
+        newRecords: 0,
+        totalPages: 0,
+        status: 'error'
+      });
+      
+      throw error;
     }
   };
 
@@ -677,7 +785,12 @@ const SyncStrategyPreferencesCard: React.FC<SyncStrategyPreferencesCardProps> = 
                 >
                   <div className="flex items-center justify-between mb-4">
                     <div>
-                      <p className="font-semibold text-sm text-gray-800">{strategy.description}</p>
+                      <div className="flex items-center space-x-2">
+                        <p className="font-semibold text-sm text-gray-800">{strategy.description}</p>
+                        <span className="inline-flex items-center px-2 py-1 text-xs font-medium bg-purple-100 text-purple-800 rounded-full">
+                          TSIN Upsert
+                        </span>
+                      </div>
                       <p className={`text-xs font-medium ${
                         strategy.cronEnabled 
                           ? 'text-green-600' 
@@ -686,6 +799,9 @@ const SyncStrategyPreferencesCard: React.FC<SyncStrategyPreferencesCardProps> = 
                             : 'text-orange-600'
                       }`}>
                         {formatSyncTimingDisplay(strategy)}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        Preserves calculation fields, updates only API data
                       </p>
                     </div>
                     <label className="flex items-center cursor-pointer">

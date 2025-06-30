@@ -2,6 +2,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createOrResumeSyncJob, processJobChunk, getActiveSyncJobs } from '@/lib/paginatedSyncService';
+import { SalesSyncService } from '@/lib/salesSyncService';
 import { cronJobLogger } from '@/lib/cronJobLogger';
 import admin from 'firebase-admin';
 
@@ -51,7 +52,7 @@ export async function GET(request: NextRequest) {
       message: 'Starting 6-month sales sync for all enabled integrations'
     });
 
-    // Get enabled integrations
+    // Get enabled integrations with comprehensive admin details
     const integrationsSnapshot = await db.collection('takealotIntegrations')
       .where('cronEnabled', '==', true)
       .get();
@@ -104,24 +105,39 @@ export async function GET(request: NextRequest) {
       console.log(`[6MonthCron] Processing 6-month sales for integration ${integrationId}`);
 
       try {
-        // Get admin details for logging
+        // Get comprehensive admin and account details for centralized logging
         let adminName = 'Unknown Admin';
         let adminEmail = 'unknown@example.com';
+        let accountName = 'Unknown Account';
+        
         try {
+          // First, get integration details including account name
+          if (integrationData.accountName) {
+            accountName = integrationData.accountName;
+          }
+          
+          // Then get admin details from users collection
           const adminDoc = await db.collection('users').doc(adminId).get();
           if (adminDoc.exists) {
             const adminData = adminDoc.data();
             adminName = adminData?.name || adminData?.displayName || 'Unknown Admin';
             adminEmail = adminData?.email || 'unknown@example.com';
+            // Override account name from user data if not found in integration
+            if (accountName === 'Unknown Account') {
+              accountName = adminData?.accountName || adminData?.company?.name || 'Unknown Account';
+            }
           }
+          
+          console.log(`[6MonthCron] Retrieved details - Admin: ${adminName} (${adminEmail}), Account: ${accountName}`);
         } catch (adminError) {
           console.warn(`[6MonthCron] Could not fetch admin details for ${adminId}:`, adminError);
         }
 
-        // Update centralized logging with progress
+        // Update centralized logging with complete admin and account information
         if (executionId) {
           await cronJobLogger.updateExecution(executionId, {
-            message: `Processing 6-month sales for integration ${integrationId} (Admin: ${adminName})`
+            message: `Processing 6-month sales for ${accountName} (Admin: ${adminName})`,
+            details: `Integration: ${integrationId}, Account: ${accountName}, Admin: ${adminName} (${adminEmail})`
           });
         }
 

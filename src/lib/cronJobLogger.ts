@@ -136,9 +136,9 @@ export class CronJobLogger {
     }
   ): Promise<void> {
     try {
+      // Remove orderBy to avoid index requirement - executionId should be unique anyway
       const query = await db.collection('cronJobLogs')
         .where('executionId', '==', executionId)
-        .orderBy('createdAt', 'desc')
         .limit(1)
         .get();
 
@@ -159,6 +159,7 @@ export class CronJobLogger {
       console.log(`[CronLogger] Updated execution: ${executionId}`);
     } catch (error) {
       console.error('[CronLogger] Failed to update execution:', error);
+      console.error('[CronLogger] Error details:', error);
     }
   }
 
@@ -182,9 +183,9 @@ export class CronJobLogger {
     const endTime = new Date();
     
     try {
+      // Remove orderBy to avoid index requirement - executionId should be unique anyway
       const query = await db.collection('cronJobLogs')
         .where('executionId', '==', executionId)
-        .orderBy('createdAt', 'desc')
         .limit(1)
         .get();
 
@@ -219,6 +220,7 @@ export class CronJobLogger {
       console.log(`[CronLogger] Completed execution: ${executionId} with status: ${params.status} (${duration}ms)`);
     } catch (error) {
       console.error('[CronLogger] Failed to complete execution:', error);
+      console.error('[CronLogger] Error details:', error);
     }
   }
 
@@ -290,13 +292,18 @@ export class CronJobLogger {
     };
 
     try {
-      await db.collection('cronJobLogs').add({
-        ...logEntry,
-        startTime: admin.firestore.Timestamp.fromDate(logEntry.startTime),
-        endTime: logEntry.endTime ? admin.firestore.Timestamp.fromDate(logEntry.endTime) : null,
-        createdAt: admin.firestore.Timestamp.fromDate(logEntry.createdAt),
-        updatedAt: admin.firestore.Timestamp.fromDate(logEntry.updatedAt)
-      });
+      // Filter out undefined values before saving to Firestore
+      const cleanLogEntry = Object.fromEntries(
+        Object.entries({
+          ...logEntry,
+          startTime: admin.firestore.Timestamp.fromDate(logEntry.startTime),
+          endTime: logEntry.endTime ? admin.firestore.Timestamp.fromDate(logEntry.endTime) : null,
+          createdAt: admin.firestore.Timestamp.fromDate(logEntry.createdAt),
+          updatedAt: admin.firestore.Timestamp.fromDate(logEntry.updatedAt)
+        }).filter(([key, value]) => value !== undefined)
+      );
+
+      await db.collection('cronJobLogs').add(cleanLogEntry);
 
       console.log(`[CronLogger] Logged manual operation: ${executionId} for ${params.operation}`);
       return executionId;

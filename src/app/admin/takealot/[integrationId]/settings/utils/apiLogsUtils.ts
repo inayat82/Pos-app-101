@@ -23,11 +23,20 @@ export const formatDuration = (duration: number | undefined): string => {
 export const formatTimestamp = (timestamp: string | undefined): { date: string; time: string } => {
   if (!timestamp) return { date: 'N/A', time: 'N/A' };
   
-  const date = new Date(timestamp);
-  return {
-    date: date.toLocaleDateString(),
-    time: date.toLocaleTimeString()
-  };
+  try {
+    const date = new Date(timestamp);
+    if (isNaN(date.getTime())) {
+      console.warn('Invalid timestamp:', timestamp);
+      return { date: 'Invalid Date', time: 'Invalid Time' };
+    }
+    return {
+      date: date.toLocaleDateString(),
+      time: date.toLocaleTimeString()
+    };
+  } catch (error) {
+    console.error('Error formatting timestamp:', timestamp, error);
+    return { date: 'Error', time: 'Error' };
+  }
 };
 
 /**

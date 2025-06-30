@@ -6,8 +6,6 @@ import {
   FiEye, FiCheck, FiX, FiClock, FiRefreshCw, FiDatabase, 
   FiBarChart, FiShoppingCart, FiActivity, FiChevronDown, FiChevronRight 
 } from 'react-icons/fi';
-import { db } from '@/lib/firebase/firebase';
-import { collection, query, where, orderBy, limit, getDocs, Timestamp } from 'firebase/firestore';
 
 interface ApiCallLogEntry {
   id: string;
@@ -62,61 +60,64 @@ export default function ApiCallLogTable({ integrationId, className = '' }: ApiCa
     setLoading(true);
     console.log(`ApiCallLogTable: Fetching logs for integrationId: ${integrationId}`);
     try {
-      // Query fetch_logs collection for operation_complete logs for this integration
-      const logsRef = collection(db, 'fetch_logs');
-      const q = query(
-        logsRef,
-        where('integrationId', '==', integrationId),
-        where('phase', '==', 'operation_complete'),
-        orderBy('timestamp', 'desc'),
-        limit(50)
-      );
+      // Use the centralized logging API instead of direct Firestore query
+      const response = await fetch(`/api/admin/takealot/fetch-logs?integrationId=${integrationId}&limit=50`);
       
-      const querySnapshot = await getDocs(q);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch logs: ${response.status} ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      console.log('ApiCallLogTable: Raw API response:', data);
+      
+      if (data.error) {
+        throw new Error(data.error);
+      }
+      
       const fetchedLogs: ApiCallLogEntry[] = [];
       
-      if (querySnapshot.empty) {
-        console.log(`ApiCallLogTable: No 'operation_complete' logs found for integrationId: ${integrationId}`);
+      if (!data.logs || data.logs.length === 0) {
+        console.log(`ApiCallLogTable: No logs found for integrationId: ${integrationId}`);
+        setLogs([]);
+        return;
       }
 
-      querySnapshot.forEach((doc) => {
-        const data = doc.data();
-        console.log('ApiCallLogTable: Raw log data from Firestore:', data);
+      // Convert API response to our log entry format
+      data.logs.forEach((logData: any) => {
+        console.log('ApiCallLogTable: Processing log data:', logData);
         
-        // Convert Firestore data to our log entry format
         const logEntry: ApiCallLogEntry = {
-          id: doc.id,
-          timestamp: data.timestamp?.toDate?.()?.toISOString() || data.timestamp || new Date().toISOString(),
-          strategy: data.requestedLimit ? 
-            `${data.operationType === 'offers' ? 'Products' : 'Sales'} - Latest ${data.requestedLimit}` :
-            `${data.operationType === 'offers' ? 'Products' : 'Sales'} - All`,
-          status: data.isSuccess ? 'completed' : 'failed',
-          recordsFetched: data.recordsFetched || 0,
-          recordsSaved: data.recordsSaved || 0,
-          pagesProcessed: data.pagesProcessed || 0,
-          totalPages: undefined, // Not tracked in current system
-          apiCallsCount: data.totalApiCalls || 0,
-          operationType: data.operationType || 'unknown',
-          operationDuration: data.operationDuration || 0,
-          requestedLimit: data.requestedLimit,
-          pageSize: data.pageSize || 100,
-          error: data.isSuccess ? undefined : 'Operation failed',
-          startTime: data.operationStartTime?.toDate?.()?.toISOString() || data.timestamp?.toDate?.()?.toISOString() || new Date().toISOString(),
-          endTime: data.operationEndTime?.toDate?.()?.toISOString() || data.timestamp?.toDate?.()?.toISOString() || new Date().toISOString(),
-          duration: data.operationDuration || 0,
-          isSuccess: data.isSuccess || false,
-          apiCallLogs: data.apiCallLogs || []
+          id: logData.id,
+          timestamp: logData.createdAt || logData.timestamp || new Date().toISOString(),
+          // Create strategy description from cronJobName or operation
+          strategy: logData.cronJobName ? 
+            logData.cronJobName.replace(/-/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()) :
+            logData.operation || 'Manual Sync',
+          status: logData.status === 'success' ? 'completed' : 
+                 logData.status === 'failure' ? 'failed' : 
+                 logData.status || 'running',
+          recordsFetched: logData.recordsFetched || logData.totalReads || 0,
+          recordsSaved: logData.recordsSaved || logData.totalWrites || 0,
+          pagesProcessed: logData.pagesFetched || logData.totalPages || 0,
+          totalPages: logData.totalPages || undefined,
+          apiCallsCount: logData.apiCallsCount || logData.totalApiCalls || 0,
+          operationType: logData.type || logData.operationType || 'unknown',
+          operationDuration: logData.duration || 0,
+          requestedLimit: logData.requestedLimit,
+          pageSize: logData.pageSize || 100,
+          error: logData.status === 'failure' ? (logData.error || 'Operation failed') : undefined,
+          startTime: logData.startTime || logData.createdAt || new Date().toISOString(),
+          endTime: logData.endTime || logData.timestamp || new Date().toISOString(),
+          duration: logData.duration || 0,
+          isSuccess: logData.status === 'success' || logData.isSuccess || false,
+          apiCallLogs: logData.apiCallLogs || []
         };
         
         fetchedLogs.push(logEntry);
       });
       
       setLogs(fetchedLogs);
-      if (fetchedLogs.length > 0) {
-        console.log('ApiCallLogTable: Successfully fetched and processed logs:', fetchedLogs);
-      } else {
-        console.log('ApiCallLogTable: Processed logs, but the array is empty.');
-      }
+      console.log('ApiCallLogTable: Successfully fetched and processed logs:', fetchedLogs);
     } catch (error) {
       console.error('ApiCallLogTable: Error fetching or processing logs:', error);
       // Optionally, set an error state here to display to the user
@@ -174,6 +175,17 @@ export default function ApiCallLogTable({ integrationId, className = '' }: ApiCa
     if (ms < 1000) return `${ms}ms`;
     if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
     return `${(ms / 60000).toFixed(1)}m`;
+  };
+
+  const formatDate = (dateString: string | null | undefined) => {
+    if (!dateString) return 'N/A';
+    try {
+      const date = new Date(dateString);
+      if (isNaN(date.getTime())) return 'Invalid Date';
+      return `${date.toLocaleDateString()} ${date.toLocaleTimeString()}`;
+    } catch (error) {
+      return 'Invalid Date';
+    }
   };
 
   const openDetailModal = (log: ApiCallLogEntry) => {
@@ -346,7 +358,7 @@ export default function ApiCallLogTable({ integrationId, className = '' }: ApiCa
                       <div className="ml-2">
                         <div className="text-sm font-medium text-gray-900">{log.strategy}</div>
                         <div className="text-xs text-gray-500">
-                          {new Date(log.timestamp).toLocaleDateString()} {new Date(log.timestamp).toLocaleTimeString()}
+                          {formatDate(log.timestamp)}
                         </div>
                       </div>
                     </div>
