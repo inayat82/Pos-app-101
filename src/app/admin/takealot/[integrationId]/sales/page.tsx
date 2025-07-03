@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { FiSearch, FiRefreshCw, FiDollarSign, FiCalendar, FiPackage, FiEye, FiX } from 'react-icons/fi';
+import { FiSearch, FiRefreshCw, FiDollarSign, FiCalendar, FiPackage, FiEye, FiX, FiTrendingUp, FiShoppingCart, FiUsers, FiFilter, FiDownload } from 'react-icons/fi';
 import { useAuth } from '@/context/AuthContext';
 import { usePageTitle } from '@/context/PageTitleContext';
 import { db } from '@/lib/firebase/firebase';
@@ -35,6 +35,24 @@ interface Product {
   [key: string]: any;
 }
 
+interface SalesAnalytics {
+  totalSales: number;
+  totalRevenue: number;
+  averageOrderValue: number;
+  totalQuantity: number;
+  topProducts: Array<{
+    product_title: string;
+    sales_count: number;
+    total_revenue: number;
+  }>;
+  salesByStatus: Record<string, number>;
+  salesTrend: Array<{
+    date: string;
+    sales: number;
+    revenue: number;
+  }>;
+}
+
 export default function TakealotSalesPage({ params }: { params: Promise<{ integrationId: string }> }) {
   const { currentUser } = useAuth();
   const { setPageTitle } = usePageTitle();
@@ -58,6 +76,13 @@ export default function TakealotSalesPage({ params }: { params: Promise<{ integr
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
   const [showSaleModal, setShowSaleModal] = useState(false);
+  const [analytics, setAnalytics] = useState<SalesAnalytics | null>(null);
+  const [dateFilter, setDateFilter] = useState({
+    from: '',
+    to: ''
+  });
+  const [statusFilter, setStatusFilter] = useState<string[]>([]);
+  const [showFilters, setShowFilters] = useState(false);
 
   useEffect(() => {
     setPageTitle('Takealot Sales');
@@ -119,33 +144,100 @@ export default function TakealotSalesPage({ params }: { params: Promise<{ integr
     }
   };
 
+  // Calculate analytics from sales data
+  const calculateAnalytics = (salesData: Sale[]): SalesAnalytics => {
+    const totalSales = salesData.length;
+    const totalRevenue = salesData.reduce((sum, sale) => sum + ((sale.selling_price || 0) * (sale.quantity || 0)), 0);
+    const totalQuantity = salesData.reduce((sum, sale) => sum + (sale.quantity || 0), 0);
+    const averageOrderValue = totalSales > 0 ? totalRevenue / totalSales : 0;
+
+    // Top products by sales count
+    const productSales: Record<string, { count: number; revenue: number }> = {};
+    salesData.forEach(sale => {
+      const key = sale.product_title || 'Unknown Product';
+      if (!productSales[key]) {
+        productSales[key] = { count: 0, revenue: 0 };
+      }
+      productSales[key].count += 1;
+      productSales[key].revenue += (sale.selling_price || 0) * (sale.quantity || 0);
+    });
+
+    const topProducts = Object.entries(productSales)
+      .map(([title, data]) => ({
+        product_title: title,
+        sales_count: data.count,
+        total_revenue: data.revenue
+      }))
+      .sort((a, b) => b.sales_count - a.sales_count)
+      .slice(0, 5);
+
+    // Sales by status
+    const salesByStatus: Record<string, number> = {};
+    salesData.forEach(sale => {
+      const status = sale.status || 'Unknown';
+      salesByStatus[status] = (salesByStatus[status] || 0) + 1;
+    });
+
+    // Sales trend (last 30 days)
+    const salesTrend: Array<{ date: string; sales: number; revenue: number }> = [];
+    const last30Days = new Date();
+    last30Days.setDate(last30Days.getDate() - 30);
+
+    for (let i = 0; i < 30; i++) {
+      const date = new Date(last30Days);
+      date.setDate(date.getDate() + i);
+      const dateStr = date.toISOString().split('T')[0];
+      
+      const daySales = salesData.filter(sale => {
+        const saleDate = new Date(sale.order_date).toISOString().split('T')[0];
+        return saleDate === dateStr;
+      });
+
+      salesTrend.push({
+        date: dateStr,
+        sales: daySales.length,
+        revenue: daySales.reduce((sum, sale) => sum + ((sale.selling_price || 0) * (sale.quantity || 0)), 0)
+      });
+    }
+
+    return {
+      totalSales,
+      totalRevenue,
+      averageOrderValue,
+      totalQuantity,
+      topProducts,
+      salesByStatus,
+      salesTrend
+    };
+  };
+
   const loadSales = async () => {
     try {
       setLoading(true);
+      
       console.log('Loading sales for integration:', integrationId);
 
-      // Use takealot_sales (correct collection with real Takealot API data)
       const salesQuery = query(
         collection(db, 'takealot_sales'),
         where('integrationId', '==', integrationId)
       );
       
       const salesSnapshot = await getDocs(salesQuery);
-      console.log('Found in takealot_sales:', salesSnapshot.size);
-
-      if (salesSnapshot.size > 0) {        const salesData = salesSnapshot.docs.map(doc => {
+      
+      if (salesSnapshot.size > 0) {
+        const salesData = salesSnapshot.docs.map(doc => {
           const data = doc.data();
           return {
-            order_id: data.order_id || data.sale_id || 'N/A',
-            order_item_id: data.order_item_id || data.item_id || '',
-            product_title: data.product_title || data.title || data.name || 'Unknown Product',
-            customer_name: data.customer_name || data.customer || 'Unknown Customer',
-            order_date: data.order_date || data.sale_date || data.created_date || 'Unknown Date',
-            selling_price: data.selling_price || data.price || data.amount || 0,
-            quantity: data.quantity || data.qty || 1,
-            status: data.status || data.sale_status || 'Unknown',
-            tsin_id: data.tsin_id,
-            sku: data.sku || data.seller_sku,
+            order_id: data.order_id || '',
+            order_item_id: data.order_item_id || '',
+            product_title: data.product_title || '',
+            customer_name: data.customer_name || '',
+            order_date: data.order_date || '',
+            selling_price: Number(data.selling_price) || 0,
+            quantity: Number(data.quantity) || 0,
+            status: data.status || '',
+            tsin_id: data.tsin_id || '',
+            sku: data.sku || '',
             customer_dc: data.customer_dc || data.dc || '',
             dc: data.customer_dc || data.dc || '',
             takealot_url_mol: data.takealot_url_mol || '',
@@ -154,18 +246,19 @@ export default function TakealotSalesPage({ params }: { params: Promise<{ integr
             stock_transfer_fee: data.stock_transfer_fee || 0,
             courier_collection_fee: data.courier_collection_fee || 0,
             ...data
-          };        });
+          };
+        });
         
-        // Remove duplicates based on order_id only (ensure unique Order IDs)
         const uniqueSales = salesData.filter((sale, index, self) => 
           index === self.findIndex(s => s.order_id === sale.order_id)
         );
         
         setSales(uniqueSales);
+        setAnalytics(calculateAnalytics(uniqueSales));
       } else {
-        // No fallback - if takealot_sales has no data, show empty state
         console.log('No sales data found in takealot_sales collection');
         setSales([]);
+        setAnalytics(null);
       }
 
     } catch (error) {
@@ -173,18 +266,37 @@ export default function TakealotSalesPage({ params }: { params: Promise<{ integr
     } finally {
       setLoading(false);
     }
-  };  // Enhanced filtering and sorting function
-  const filteredAndSortedSales = () => {    let filtered = sales.filter(sale => {
-      if (!searchTerm.trim()) return true;
-      
-      const searchLower = searchTerm.toLowerCase();
-      return (
-        (sale.product_title && typeof sale.product_title === 'string' && sale.product_title.toLowerCase().includes(searchLower)) ||
-        (sale.order_id && String(sale.order_id).toLowerCase().includes(searchLower)) ||
-        (sale.customer_name && typeof sale.customer_name === 'string' && sale.customer_name.toLowerCase().includes(searchLower)) ||
-        (sale.sku && typeof sale.sku === 'string' && sale.sku.toLowerCase().includes(searchLower)) ||
-        (sale.tsin_id && String(sale.tsin_id).toLowerCase().includes(searchLower))
-      );
+  };
+
+  // Enhanced filtering function
+  const filteredAndSortedSales = () => {
+    let filtered = sales.filter(sale => {
+      // Search filter
+      if (searchTerm.trim()) {
+        const searchLower = searchTerm.toLowerCase();
+        const matches = (
+          (sale.product_title && typeof sale.product_title === 'string' && sale.product_title.toLowerCase().includes(searchLower)) ||
+          (sale.order_id && String(sale.order_id).toLowerCase().includes(searchLower)) ||
+          (sale.customer_name && typeof sale.customer_name === 'string' && sale.customer_name.toLowerCase().includes(searchLower)) ||
+          (sale.sku && typeof sale.sku === 'string' && sale.sku.toLowerCase().includes(searchLower)) ||
+          (sale.tsin_id && String(sale.tsin_id).toLowerCase().includes(searchLower))
+        );
+        if (!matches) return false;
+      }
+
+      // Date filter
+      if (dateFilter.from || dateFilter.to) {
+        const saleDate = new Date(sale.order_date);
+        if (dateFilter.from && saleDate < new Date(dateFilter.from)) return false;
+        if (dateFilter.to && saleDate > new Date(dateFilter.to)) return false;
+      }
+
+      // Status filter
+      if (statusFilter.length > 0 && !statusFilter.includes(sale.status)) {
+        return false;
+      }
+
+      return true;
     });
 
     // Apply sorting
@@ -305,13 +417,38 @@ export default function TakealotSalesPage({ params }: { params: Promise<{ integr
     total + (sale.selling_price * sale.quantity), 0
   );
 
+  // Export sales data
+  const exportSalesData = () => {
+    const filteredSales = filteredAndSortedSales();
+    const csvContent = [
+      'Order ID,Product Title,Customer Name,Order Date,Selling Price,Quantity,Status,TSIN,SKU,DC',
+      ...filteredSales.map(sale => [
+        sale.order_id,
+        `"${sale.product_title}"`,
+        `"${sale.customer_name}"`,
+        sale.order_date,
+        sale.selling_price,
+        sale.quantity,
+        sale.status,
+        sale.tsin_id,
+        sale.sku,
+        sale.dc
+      ].join(','))
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `takealot-sales-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+  };
+
   if (loading) {
     return (
-      <div className="flex justify-center items-center h-64">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p>Loading sales...</p>
-        </div>
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
       </div>
     );
   }
@@ -319,51 +456,147 @@ export default function TakealotSalesPage({ params }: { params: Promise<{ integr
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="bg-white p-6 rounded-lg shadow-sm">
-        <div className="flex justify-between items-center">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">Takealot Sales</h1>            <div className="flex items-center gap-6 mt-2">
-              <p className="text-gray-600">{filteredSales.length} sales found</p>
-            </div>
-          </div>          <button
-            onClick={() => {
-              loadSales();
-              loadProducts();
-            }}
-            className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Takealot Sales</h1>
+          <p className="text-gray-600 mt-1">Monitor your sales performance and revenue analytics</p>
+        </div>
+        <div className="flex space-x-2">
+          <button
+            onClick={exportSalesData}
+            className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
           >
-            <FiRefreshCw className="mr-2" />
+            <FiDownload className="h-4 w-4 mr-2" />
+            Export CSV
+          </button>
+          <button
+            onClick={loadSales}
+            className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            <FiRefreshCw className="h-4 w-4 mr-2" />
             Refresh
           </button>
         </div>
-      </div>      {/* Search and Controls */}
-      <div className="bg-white p-4 rounded-lg shadow-sm">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div className="relative flex-1 max-w-md">
-            <FiSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Search sales by product, order ID, or customer..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-            />
+      </div>
+
+      {/* Analytics Dashboard */}
+      {analytics && (
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="bg-white p-6 rounded-lg shadow">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-600">Total Sales</p>
+                <p className="text-2xl font-bold text-gray-900">{analytics.totalSales.toLocaleString()}</p>
+              </div>
+              <FiShoppingCart className="h-8 w-8 text-blue-600" />
+            </div>
           </div>
-          
-          <div className="flex items-center gap-3">
-            <span className="text-sm text-gray-700">Show:</span>
-            <select
-              value={itemsPerPage}
-              onChange={(e) => setItemsPerPage(Number(e.target.value))}
-              className="border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
-            >
-              <option value={50}>50</option>
-              <option value={100}>100</option>
-              <option value={200}>200</option>
-            </select>
-            <span className="text-sm text-gray-700">per page</span>
+
+          <div className="bg-white p-6 rounded-lg shadow">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-600">Total Revenue</p>
+                <p className="text-2xl font-bold text-green-600">R{analytics.totalRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+              </div>
+              <FiDollarSign className="h-8 w-8 text-green-600" />
+            </div>
+          </div>
+
+          <div className="bg-white p-6 rounded-lg shadow">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-600">Avg Order Value</p>
+                <p className="text-2xl font-bold text-purple-600">R{analytics.averageOrderValue.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+              </div>
+              <FiTrendingUp className="h-8 w-8 text-purple-600" />
+            </div>
+          </div>
+
+          <div className="bg-white p-6 rounded-lg shadow">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-gray-600">Total Quantity</p>
+                <p className="text-2xl font-bold text-orange-600">{analytics.totalQuantity.toLocaleString()}</p>
+              </div>
+              <FiPackage className="h-8 w-8 text-orange-600" />
+            </div>
           </div>
         </div>
+      )}
+
+      {/* Filters and Search */}
+      <div className="bg-white p-4 rounded-lg shadow">
+        <div className="flex flex-col md:flex-row gap-4">
+          <div className="flex-1">
+            <div className="relative">
+              <FiSearch className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Search by product title, order ID, customer name, SKU, or TSIN..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-10 pr-4 py-2 w-full border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
+          </div>
+          
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            className="flex items-center px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+          >
+            <FiFilter className="h-4 w-4 mr-2" />
+            Filters
+          </button>
+        </div>
+
+        {showFilters && (
+          <div className="mt-4 p-4 bg-gray-50 rounded-lg">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">From Date</label>
+                <input
+                  type="date"
+                  value={dateFilter.from}
+                  onChange={(e) => setDateFilter(prev => ({ ...prev, from: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">To Date</label>
+                <input
+                  type="date"
+                  value={dateFilter.to}
+                  onChange={(e) => setDateFilter(prev => ({ ...prev, to: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+                <select
+                  multiple
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(Array.from(e.target.selectedOptions, option => option.value))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  {analytics && Object.keys(analytics.salesByStatus).map(status => (
+                    <option key={status} value={status}>{status}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="mt-3 flex justify-end space-x-2">
+              <button
+                onClick={() => {
+                  setDateFilter({ from: '', to: '' });
+                  setStatusFilter([]);
+                }}
+                className="px-4 py-2 text-gray-600 hover:text-gray-800 transition-colors"
+              >
+                Clear Filters
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Sales */}

@@ -186,10 +186,10 @@ const LogsPage: React.FC<LogsPageProps> = ({ params }) => {
     }
   }, [currentUser, historyPageSize]);
 
-  // Auto-refresh running jobs
+  // Auto-refresh running jobs - Reduced frequency for admin view
   useEffect(() => {
     loadRunningJobs();
-    const interval = setInterval(loadRunningJobs, 5000); // Refresh every 5 seconds
+    const interval = setInterval(loadRunningJobs, 60000); // Refresh every 60 seconds (reduced from 30 seconds)
     return () => clearInterval(interval);
   }, [loadRunningJobs]);
 

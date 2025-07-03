@@ -1,6 +1,7 @@
 // src/lib/productSyncService.ts
 import { dbAdmin as db } from '@/lib/firebase/firebaseAdmin';
 import { cronJobLogger } from '@/lib/cronJobLogger';
+import { takealotProxyService } from '@/modules/takealot/services';
 
 interface ProductRecord {
   tsin_id?: string;
@@ -25,6 +26,7 @@ interface SyncResult {
 export class ProductSyncService {
   private integrationId: string;
   private logId: string | null = null;
+  private proxyInfo: { proxyUsed?: string; proxyCountry?: string; proxyProvider?: string } = {};
 
   constructor(integrationId: string) {
     this.integrationId = integrationId;
@@ -340,20 +342,20 @@ export class ProductSyncService {
   /**
    * Fetch product data from Takealot API based on strategy
    */
-  async fetchProductsFromAPI(apiKey: string, strategy: string): Promise<ProductRecord[]> {
-    const TAKEALOT_API_BASE = 'https://seller-api.takealot.com';
+  async fetchProductsFromAPI(apiKey: string, strategy: string, triggerType?: 'manual' | 'cron'): Promise<ProductRecord[]> {
     const endpoint = '/v2/offers';
     
     // Configure parameters based on strategy
-    const params = new URLSearchParams();
-    params.append('page_size', '100');
+    const params: Record<string, string | number> = {
+      page_size: 100
+    };
     
     let maxPages = 1000; // Default max for unlimited strategies
     
     switch (strategy) {
       case 'Fetch 100 Products':
         // Fetch only first page (100 records)
-        params.append('page_number', '1');
+        params.page_number = 1;
         maxPages = 1;
         break;
       case 'Fetch 200 Products':
@@ -373,26 +375,40 @@ export class ProductSyncService {
 
     try {
       do {
-        params.set('page_number', currentPage.toString());
-        const apiUrl = `${TAKEALOT_API_BASE}${endpoint}?${params.toString()}`;
+        params.page_number = currentPage;
         
-        console.log(`Fetching products page ${currentPage}: ${apiUrl}`);
+        console.log(`[ProductSync] Fetching products page ${currentPage} through proxy service`);
         
-        const response = await fetch(apiUrl, {
-          method: 'GET',
-          headers: {
-            'Authorization': `Key ${apiKey}`,
-            'Content-Type': 'application/json',
-            'User-Agent': 'POS-App/1.0'
-          },
-          signal: AbortSignal.timeout(60000)
+        // Use the new proxy service instead of direct fetch
+        const response = await takealotProxyService.get(endpoint, apiKey, params, {
+          adminId: this.integrationId, // Use integrationId as adminId for logging
+          integrationId: this.integrationId,
+          requestType: triggerType || 'manual',
+          dataType: 'products',
+          timeout: 60000
         });
 
-        if (!response.ok) {
-          throw new Error(`API request failed: ${response.status} ${response.statusText}`);
+        if (!response.success) {
+          throw new Error(`API request failed: ${response.error}`);
         }
 
-        const data = await response.json();
+        const data = response.data;
+        
+        // Capture proxy information for logging (first successful request)
+        if (response.proxyUsed && !this.proxyInfo.proxyUsed) {
+          this.proxyInfo.proxyUsed = response.proxyUsed;
+          this.proxyInfo.proxyProvider = 'Webshare';
+          // Extract country from proxy logs (look for (ZA) pattern in the logs)
+          // Since proxy info comes from logs, we'll extract it differently
+          this.proxyInfo.proxyCountry = 'ZA'; // Default to ZA for South African proxies
+          console.log(`[ProductSync] Captured proxy info:`, this.proxyInfo);
+        }
+        
+        console.log(`[ProductSync] API Response for page ${currentPage}:`, {
+          totalRecords: data.total_results || 'unknown',
+          currentPageRecords: data.offers?.length || 0,
+          proxyUsed: response.proxyUsed
+        });
         
         // Extract product records
         const productRecords = data.offers || [];
@@ -403,7 +419,7 @@ export class ProductSyncService {
           totalPages = Math.ceil(data.total_results / data.page_size);
         }
         
-        console.log(`Fetched page ${currentPage}/${Math.min(totalPages, maxPages)}: ${productRecords.length} records`);
+        console.log(`[ProductSync] Fetched page ${currentPage}/${Math.min(totalPages, maxPages)}: ${productRecords.length} records`);
         
         // Stop if we've reached our max pages or if the page is empty
         if (currentPage >= maxPages || productRecords.length === 0) {
@@ -418,11 +434,11 @@ export class ProductSyncService {
       } while (currentPage <= totalPages && currentPage <= maxPages);
       
     } catch (error) {
-      console.error('Error fetching products from API:', error);
+      console.error('[ProductSync] Error fetching products from API:', error);
       throw error;
     }
 
-    console.log(`Total product records fetched: ${allProductRecords.length}`);
+    console.log(`[ProductSync] Total product records fetched: ${allProductRecords.length}`);
     return allProductRecords;
   }
 
@@ -443,7 +459,7 @@ export class ProductSyncService {
     
     try {
       // Wrap the entire sync operation in a timeout
-      const syncPromise = this.performSyncOperation(apiKey, strategy);
+      const syncPromise = this.performSyncOperation(apiKey, strategy, triggerType);
       const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(() => {
           reject(new Error(`Product sync operation timed out after ${timeoutMs / 1000} seconds`));
@@ -485,9 +501,9 @@ export class ProductSyncService {
   /**
    * Perform the actual sync operation (separated for timeout handling)
    */
-  private async performSyncOperation(apiKey: string, strategy: string): Promise<SyncResult> {
+  private async performSyncOperation(apiKey: string, strategy: string, triggerType?: 'manual' | 'cron'): Promise<SyncResult> {
     // Fetch products from API
-    const productRecords = await this.fetchProductsFromAPI(apiKey, strategy);
+    const productRecords = await this.fetchProductsFromAPI(apiKey, strategy, triggerType);
     
     // Process and save to database
     const result = await this.processProductRecords(productRecords);
@@ -514,7 +530,11 @@ export class ProductSyncService {
         totalWrites: result.totalNew + result.totalUpdated,
         itemsProcessed: result.totalProcessed,
         details: `New: ${result.totalNew}, Updated: ${result.totalUpdated}, Errors: ${result.totalErrors}, Skipped: ${result.totalSkipped}`,
-        errorDetails: success ? undefined : `Errors: ${result.totalErrors}`
+        errorDetails: success ? undefined : `Errors: ${result.totalErrors}`,
+        // Include proxy information for SuperAdmin monitoring
+        proxyUsed: this.proxyInfo.proxyUsed,
+        proxyCountry: this.proxyInfo.proxyCountry,
+        proxyProvider: this.proxyInfo.proxyProvider
       });
       
       console.log(`Product sync logging completed: ${this.logId} for ${strategy} (${triggerType})`);

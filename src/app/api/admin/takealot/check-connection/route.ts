@@ -1,7 +1,7 @@
 // src/app/api/admin/takealot/check-connection/route.ts
 import { NextResponse } from 'next/server';
 import { dbAdmin } from '@/lib/firebase/firebaseAdmin';
-import { checkTakealotConnection, TakealotApiError } from '@/lib/takealotApiService';
+import { checkTakealotConnection, TakealotApiError } from '@/modules/takealot/services';
 
 export async function POST(request: Request) {
   let integrationId: string | undefined;

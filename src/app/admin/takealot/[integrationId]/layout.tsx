@@ -3,6 +3,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '@/context/AuthContext';
+import { usePageTitle } from '@/context/PageTitleContext';
 import { db } from '@/lib/firebase/firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import { useRouter } from 'next/navigation';
@@ -22,6 +23,7 @@ export default function TakealotIntegrationLayout({
   params: Promise<{ integrationId: string }>;
 }) {
   const { currentUser } = useAuth();
+  const { setAccountName } = usePageTitle();
   const router = useRouter();
   const [integration, setIntegration] = useState<TakealotIntegration | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -37,7 +39,9 @@ export default function TakealotIntegrationLayout({
   }, [params]);
 
   useEffect(() => {
-    if (!currentUser?.uid || !integrationId) return;    const fetchIntegration = async () => {
+    if (!currentUser?.uid || !integrationId) return;
+
+    const fetchIntegration = async () => {
       try {
         const integrationDoc = await getDoc(doc(db, 'takealotIntegrations', integrationId));
         
@@ -52,10 +56,16 @@ export default function TakealotIntegrationLayout({
         if (integrationData.adminId !== currentUser.uid && integrationData.assignedUserId !== currentUser.uid) {
           setError('Access denied to this integration');
           return;
-        }        setIntegration({
+        }
+
+        setIntegration({
           ...integrationData,
           id: integrationDoc.id,
         });
+        
+        // Set the account name in the page title context
+        console.log('Setting account name:', integrationData.accountName);
+        setAccountName(integrationData.accountName);
       } catch (err: any) {
         console.error('Error fetching integration:', err);
         setError('Failed to load integration');
@@ -65,7 +75,14 @@ export default function TakealotIntegrationLayout({
     };
 
     fetchIntegration();
-  }, [currentUser?.uid, integrationId]);
+  }, [currentUser?.uid, integrationId, setAccountName]);
+
+  // Clear account name when component unmounts
+  useEffect(() => {
+    return () => {
+      setAccountName('');
+    };
+  }, [setAccountName]);
 
   if (isLoading) {
     return (
@@ -95,9 +112,9 @@ export default function TakealotIntegrationLayout({
       </div>
     );
   }
+
   return (
-    <div className="space-y-6">
-      {/* Integration Content */}
+    <div className="bg-white shadow-sm rounded-lg">
       {children}
     </div>
   );

@@ -15,7 +15,7 @@ import {
   addDoc, serverTimestamp, Timestamp, setDoc
 } from 'firebase/firestore';
 import { UserRole } from '@/types/user';
-import { useTakealotIntegration } from '@/hooks/useTakealotIntegration';
+import { useTakealotIntegration } from '@/modules/takealot/hooks/useTakealotIntegration';
 import DataCleanupCard from '../components/DataCleanupCard';
 
 interface TakealotIntegration {

@@ -1,7 +1,6 @@
 // src/lib/productMetricsCalculator.ts
 
-import { db } from '@/lib/firebase/firebase';
-import { collection, query, where, getDocs, doc, updateDoc, writeBatch } from 'firebase/firestore';
+import { dbAdmin as db } from '@/lib/firebase/firebaseAdmin';
 
 interface ProductMetrics {
   avgSellingPrice: number;

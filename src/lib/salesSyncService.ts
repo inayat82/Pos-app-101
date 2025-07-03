@@ -1,6 +1,7 @@
 // src/lib/salesSyncService.ts
 import { dbAdmin as db } from '@/lib/firebase/firebaseAdmin';
 import { cronJobLogger } from '@/lib/cronJobLogger';
+import { takealotProxyService } from '@/modules/takealot/services';
 
 interface SalesRecord {
   order_id?: string;
@@ -22,6 +23,7 @@ interface SyncResult {
 export class SalesSyncService {
   private integrationId: string;
   private logId: string | null = null;
+  private proxyInfo: { proxyUsed?: string; proxyCountry?: string; proxyProvider?: string } = {};
 
   constructor(integrationId: string) {
     this.integrationId = integrationId;
@@ -124,7 +126,11 @@ export class SalesSyncService {
         totalWrites: result.totalNew + result.totalUpdated,
         itemsProcessed: result.totalProcessed,
         details: `New: ${result.totalNew}, Updated: ${result.totalUpdated}, Errors: ${result.totalErrors}, Skipped: ${result.totalSkipped}`,
-        errorDetails: success ? undefined : `Errors: ${result.totalErrors}`
+        errorDetails: success ? undefined : `Errors: ${result.totalErrors}`,
+        // Include proxy information for SuperAdmin monitoring
+        proxyUsed: this.proxyInfo.proxyUsed,
+        proxyCountry: this.proxyInfo.proxyCountry,
+        proxyProvider: this.proxyInfo.proxyProvider
       });
       
       console.log(`Sales sync logging completed: ${this.logId} for ${strategy} (${triggerType})`);
@@ -295,26 +301,26 @@ export class SalesSyncService {
   /**
    * Fetch sales data from Takealot API based on strategy
    */
-  async fetchSalesFromAPI(apiKey: string, strategy: string): Promise<SalesRecord[]> {
-    const TAKEALOT_API_BASE = 'https://seller-api.takealot.com';
-    const endpoint = '/V2/sales';
+  async fetchSalesFromAPI(apiKey: string, strategy: string, triggerType?: 'manual' | 'cron'): Promise<SalesRecord[]> {
+    const endpoint = '/v2/sales';
     
     // Configure parameters based on strategy
-    const params = new URLSearchParams();
-    params.append('page_size', '100');
+    const params: Record<string, string | number> = {
+      page_size: 100
+    };
     
     switch (strategy) {
       case 'Last 100':
         // Fetch only first page (100 records)
-        params.append('page_number', '1');
+        params.page_number = 1;
         break;
       case 'Last 30 Days':
         const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-        params.append('created_date_start', thirtyDaysAgo.toISOString().split('T')[0]);
+        params.created_date_start = thirtyDaysAgo.toISOString().split('T')[0];
         break;
       case 'Last 6 Months':
         const sixMonthsAgo = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000);
-        params.append('created_date_start', sixMonthsAgo.toISOString().split('T')[0]);
+        params.created_date_start = sixMonthsAgo.toISOString().split('T')[0];
         break;
       case 'All Data':
         // No date filter - fetch all data
@@ -327,41 +333,46 @@ export class SalesSyncService {
 
     try {
       do {
-        params.set('page_number', currentPage.toString());
-        const apiUrl = `${TAKEALOT_API_BASE}${endpoint}?${params.toString()}`;
+        params.page_number = currentPage;
         
-        console.log(`Fetching sales page ${currentPage}: ${apiUrl}`);
-        console.log(`API Request Headers:`, {
-          'Authorization': `Key ${apiKey.substring(0, 10)}...`,
-          'Content-Type': 'application/json',
-          'User-Agent': 'POS-App/1.0'
-        });
+        console.log(`[SalesSync] Fetching sales page ${currentPage} through proxy service`);
         
-        const response = await fetch(apiUrl, {
-          method: 'GET',
-          headers: {
-            'Authorization': `Key ${apiKey}`,
-            'Content-Type': 'application/json',
-            'User-Agent': 'POS-App/1.0'
-          },
-          signal: AbortSignal.timeout(60000)
+        // Use the new proxy service instead of direct fetch
+        const response = await takealotProxyService.get(endpoint, apiKey, params, {
+          adminId: this.integrationId, // Use integrationId as adminId for logging
+          integrationId: this.integrationId,
+          requestType: triggerType || 'manual',
+          dataType: 'sales',
+          timeout: 60000
         });
 
-        if (!response.ok) {
-          throw new Error(`API request failed: ${response.status} ${response.statusText}`);
+        if (!response.success) {
+          throw new Error(`API request failed: ${response.error}`);
         }
 
-        const data = await response.json();
-        console.log(`API Response for page ${currentPage}:`, {
+        const data = response.data;
+        
+        // Capture proxy information for logging (first successful request)
+        if (response.proxyUsed && !this.proxyInfo.proxyUsed) {
+          this.proxyInfo.proxyUsed = response.proxyUsed;
+          this.proxyInfo.proxyProvider = 'Webshare';
+          // Extract country from proxy logs (look for (ZA) pattern in the logs)
+          // Since proxy info comes from logs, we'll extract it differently
+          this.proxyInfo.proxyCountry = 'ZA'; // Default to ZA for South African proxies
+          console.log(`[SalesSync] Captured proxy info:`, this.proxyInfo);
+        }
+        
+        console.log(`[SalesSync] API Response for page ${currentPage}:`, {
           totalRecords: data.page_summary?.total || 'unknown',
           currentPageRecords: data.sales?.length || 0,
-          pageInfo: data.page_summary || 'no page summary'
+          pageInfo: data.page_summary || 'no page summary',
+          proxyUsed: response.proxyUsed
         });
         
         // Extract sales records
         const salesRecords = data.sales || [];
         if (salesRecords.length === 0) {
-          console.log(`No sales records found on page ${currentPage}, stopping pagination`);
+          console.log(`[SalesSync] No sales records found on page ${currentPage}, stopping pagination`);
           break;
         }
         
@@ -372,7 +383,7 @@ export class SalesSyncService {
           totalPages = Math.ceil(data.page_summary.total / 100);
         }
         
-        console.log(`Fetched page ${currentPage}/${totalPages}: ${salesRecords.length} records`);
+        console.log(`[SalesSync] Fetched page ${currentPage}/${totalPages}: ${salesRecords.length} records`);
         
         // For "Last 100" strategy, only fetch first page
         if (strategy === 'Last 100') {
@@ -387,11 +398,11 @@ export class SalesSyncService {
       } while (currentPage <= totalPages);
       
     } catch (error) {
-      console.error('Error fetching sales from API:', error);
+      console.error('[SalesSync] Error fetching sales from API:', error);
       throw error;
     }
 
-    console.log(`Total sales records fetched: ${allSalesRecords.length}`);
+    console.log(`[SalesSync] Total sales records fetched: ${allSalesRecords.length}`);
     return allSalesRecords;
   }
 
@@ -409,7 +420,7 @@ export class SalesSyncService {
     
     try {
       // Wrap the entire sync operation in a timeout
-      const syncPromise = this.performSyncOperation(apiKey, strategy);
+      const syncPromise = this.performSyncOperation(apiKey, strategy, triggerType);
       const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(() => {
           reject(new Error(`Sync operation timed out after ${timeoutMs / 1000} seconds`));
@@ -451,9 +462,9 @@ export class SalesSyncService {
   /**
    * Perform the actual sync operation (separated for timeout handling)
    */
-  private async performSyncOperation(apiKey: string, strategy: string): Promise<SyncResult> {
+  private async performSyncOperation(apiKey: string, strategy: string, triggerType?: 'manual' | 'cron'): Promise<SyncResult> {
     // Fetch sales from API
-    const salesRecords = await this.fetchSalesFromAPI(apiKey, strategy);
+    const salesRecords = await this.fetchSalesFromAPI(apiKey, strategy, triggerType);
     
     // Process and save to database
     const result = await this.processSalesRecords(salesRecords);

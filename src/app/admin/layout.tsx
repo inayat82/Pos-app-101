@@ -62,8 +62,11 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
 const AdminLayoutContent: React.FC<AdminLayoutProps> = ({ children }) => {
   // All hooks must be called at the top level
   const context = useContext(AuthContext);
-  const { pageTitle } = usePageTitle();
+  const { pageTitle, accountName } = usePageTitle();
   const router = useRouter();
+  
+  // Debug logging
+  console.log('AdminLayout - pageTitle:', pageTitle, 'accountName:', accountName);
 
   // Handle the case where context is not available
   useEffect(() => {
@@ -102,7 +105,7 @@ const AdminLayoutContent: React.FC<AdminLayoutProps> = ({ children }) => {
     <div className="flex h-screen bg-slate-100">
       <AdminSidebar />
       <div className="flex-1 flex flex-col overflow-hidden">
-        <Topbar pageTitle={pageTitle} />
+        <Topbar pageTitle={pageTitle} accountName={accountName} />
         <main className="flex-1 overflow-x-hidden overflow-y-auto bg-slate-100 p-2 md:p-4">
           {children}
         </main>

@@ -27,6 +27,11 @@ export interface CronJobLog {
   totalWrites?: number;
   itemsProcessed?: number;
   
+  // Proxy Information (for SuperAdmin monitoring)
+  proxyUsed?: string; // e.g., '82.26.246.148:7972'
+  proxyCountry?: string; // e.g., 'ZA'
+  proxyProvider?: string; // e.g., 'Webshare'
+  
   // Detailed Information
   message: string;
   details?: string;

@@ -3,30 +3,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { calculateAllProductMetrics } from '@/lib/productMetricsCalculator';
 import { cronJobLogger } from '@/lib/cronJobLogger';
-import { getFirestore } from 'firebase-admin/firestore';
-import admin from 'firebase-admin';
-
-// Initialize Firebase Admin if not already initialized
-if (!admin.apps.length) {
-  if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
-    const serviceAccount = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON);
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount),
-    });
-  } else if (process.env.FIREBASE_SERVICE_ACCOUNT_PROJECT_ID && process.env.FIREBASE_SERVICE_ACCOUNT_PRIVATE_KEY && process.env.FIREBASE_SERVICE_ACCOUNT_CLIENT_EMAIL) {
-    admin.initializeApp({
-      credential: admin.credential.cert({
-        projectId: process.env.FIREBASE_SERVICE_ACCOUNT_PROJECT_ID,
-        privateKey: process.env.FIREBASE_SERVICE_ACCOUNT_PRIVATE_KEY.replace(/\\n/g, '\n'),
-        clientEmail: process.env.FIREBASE_SERVICE_ACCOUNT_CLIENT_EMAIL,
-      }),
-    });
-  } else {
-    admin.initializeApp();
-  }
-}
-
-const db = getFirestore();
+import { dbAdmin as db } from '@/lib/firebase/firebaseAdmin';
 
 // Verify cron job authorization
 function isAuthorizedCronJob(request: NextRequest): boolean {

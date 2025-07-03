@@ -310,6 +310,15 @@ const AdminSidebar: React.FC = () => {
                       </li>
                       <li>
                         <Link 
+                          href={`/admin/takealot/${integration.id}/auto-price`} 
+                          className={subMenuItemClass(currentPathname === `/admin/takealot/${integration.id}/auto-price`)}
+                        >
+                          <AdjustmentsHorizontalIcon className={subIconClass(currentPathname === `/admin/takealot/${integration.id}/auto-price`)} />
+                          Auto Price
+                        </Link>
+                      </li>
+                      <li>
+                        <Link 
                           href={`/admin/takealot/${integration.id}/reports`} 
                           className={subMenuItemClass(currentPathname === `/admin/takealot/${integration.id}/reports`)}
                         >

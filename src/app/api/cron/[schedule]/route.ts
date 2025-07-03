@@ -1,6 +1,6 @@
 // app/api/cron/[schedule]/route.ts
 import { NextResponse } from 'next/server';
-import { processSyncPreferencesForSchedule, getCronLabelFromSchedule } from '@/lib/takealotSyncService';
+import { processSyncPreferencesForSchedule, getCronLabelFromSchedule } from '@/modules/takealot/services';
 
 // This is a convention for Vercel Cron Jobs
 // The path app/api/cron/[schedule]/route.ts will handle requests like /api/cron/hourly

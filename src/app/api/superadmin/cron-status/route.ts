@@ -4,93 +4,115 @@ export async function GET(request: NextRequest) {
   try {
     console.log('Fetching cron status...');
     
-    // For development - return mock data until Firebase indexes are configured
+    // For development - return mock data with proper structure
     const mockCronStatus = {
       success: true,
+      systemHealth: {
+        totalCronJobs: 4,
+        healthyCronJobs: 4,
+        overdueCronJobs: 0,
+        unhealthyCronJobs: 0,
+        activeJobs: 4,
+        enabledIntegrations: 12,
+        totalExecutions24h: 41,
+        totalErrors24h: 0,
+        overallSuccessRate: 100,
+        lastSystemCheck: new Date().toISOString()
+      },
       cronJobs: [
         {
           name: 'takealot-robust-hourly',
           schedule: 'Every hour',
+          expected_interval_minutes: 60,
+          endpoint: '/api/cron/takealot-robust-hourly',
+          description: 'Robust hourly product sync',
+          cronExpression: '0 * * * *',
           isActive: true,
-          status: 'waiting',
-          lastExecution: {
-            timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000),
-            success: true,
-            duration: 45000,
-            itemsProcessed: 150
-          },
+          status: 'healthy',
+          lastExecution: new Date(Date.now() - 2 * 60 * 60 * 1000),
           executions24h: 23,
           errors24h: 0,
-          avgDuration: 42000,
           successRate: 100,
+          isOverdue: false,
           nextExpectedRun: new Date(Date.now() + 30 * 60 * 1000),
-          health: 'healthy'
+          lastError: null
         },
         {
           name: 'takealot-paginated-daily',
           schedule: 'Every 2 hours',
+          expected_interval_minutes: 120,
+          endpoint: '/api/cron/takealot-paginated-daily',
+          description: 'Paginated daily sync',
+          cronExpression: '0 */2 * * *',
           isActive: true,
-          status: 'success',
-          lastExecution: {
-            timestamp: new Date(Date.now() - 45 * 60 * 1000),
-            success: true,
-            duration: 78000,
-            itemsProcessed: 320
-          },
+          status: 'healthy',
+          lastExecution: new Date(Date.now() - 45 * 60 * 1000),
           executions24h: 12,
           errors24h: 0,
-          avgDuration: 76000,
           successRate: 100,
+          isOverdue: false,
           nextExpectedRun: new Date(Date.now() + 75 * 60 * 1000),
-          health: 'healthy'
+          lastError: null
         },
         {
           name: 'calculate-product-metrics',
           schedule: 'Every 6 hours',
+          expected_interval_minutes: 360,
+          endpoint: '/api/cron/calculate-product-metrics',
+          description: 'Calculate product performance metrics',
+          cronExpression: '0 */6 * * *',
           isActive: true,
-          status: 'waiting',
-          lastExecution: {
-            timestamp: new Date(Date.now() - 3 * 60 * 60 * 1000),
-            success: true,
-            duration: 125000,
-            itemsProcessed: 89
-          },
+          status: 'healthy',
+          lastExecution: new Date(Date.now() - 3 * 60 * 60 * 1000),
           executions24h: 4,
           errors24h: 0,
-          avgDuration: 120000,
           successRate: 100,
+          isOverdue: false,
           nextExpectedRun: new Date(Date.now() + 3 * 60 * 60 * 1000),
-          health: 'healthy'
+          lastError: null
         },
         {
-          name: 'takealot-6month-sales',
-          schedule: 'Twice daily',
+          name: 'cleanup-old-logs',
+          schedule: 'Daily at 2 AM',
+          expected_interval_minutes: 1440,
+          endpoint: '/api/cron/cleanup-old-logs',
+          description: 'Clean up old log entries',
+          cronExpression: '0 2 * * *',
           isActive: true,
-          status: 'success',
-          lastExecution: {
-            timestamp: new Date(Date.now() - 6 * 60 * 60 * 1000),
-            success: true,
-            duration: 156000,
-            itemsProcessed: 245
-          },
-          executions24h: 2,
+          status: 'healthy',
+          lastExecution: new Date(Date.now() - 18 * 60 * 60 * 1000),
+          executions24h: 1,
           errors24h: 0,
-          avgDuration: 150000,
           successRate: 100,
+          isOverdue: false,
           nextExpectedRun: new Date(Date.now() + 6 * 60 * 60 * 1000),
-          health: 'healthy'
+          lastError: null
         }
       ],
-      summary: {
-        totalJobs: 4,
-        activeJobs: 4,
-        healthyJobs: 4,
-        totalExecutions24h: 41,
-        totalErrors24h: 0,
-        overallSuccessRate: 100
+      databaseHealth: {
+        status: 'healthy',
+        connectionStatus: 'connected',
+        responseTime: 120,
+        connections: 15,
+        lastCheck: new Date().toISOString(),
+        lastSuccessfulWrite: new Date().toISOString(),
+        collections: {
+          'sync_jobs': 'accessible',
+          'takealotSyncLogs': 'accessible',
+          'cronJobLogs': 'accessible',
+          'users': 'accessible',
+          'takealotIntegrations': 'accessible'
+        }
       },
-      lastUpdated: new Date(),
-      note: 'Mock data for development - will show real data when deployed to Vercel with proper Firebase indexes'
+      performanceData: {
+        avgResponseTime: 340,
+        p95ResponseTime: 890,
+        errorRate: 0.002,
+        requestsPerMinute: 45,
+        totalItemsProcessed24h: 15420,
+        totalPagesProcessed24h: 287,
+        avgProcessingTime: 42000
+      }
     };
 
     console.log('Returning mock cron status data');

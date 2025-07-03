@@ -53,6 +53,10 @@ export class CronJobLogger {
     triggerSource?: string;
     message: string;
     details?: string;
+    // Proxy information for SuperAdmin monitoring
+    proxyUsed?: string;
+    proxyCountry?: string;
+    proxyProvider?: string;
   }): Promise<string> {
     const executionId = uuidv4();
     const now = new Date();
@@ -85,6 +89,11 @@ export class CronJobLogger {
       // Detailed Information
       message: params.message,
       details: params.details,
+      
+      // Proxy Information (for SuperAdmin monitoring)
+      proxyUsed: params.proxyUsed,
+      proxyCountry: params.proxyCountry,
+      proxyProvider: params.proxyProvider,
       
       // Metadata
       triggerType: params.triggerType,
@@ -178,6 +187,10 @@ export class CronJobLogger {
       details?: string;
       errorDetails?: string;
       stackTrace?: string;
+      // Proxy information updates
+      proxyUsed?: string;
+      proxyCountry?: string;
+      proxyProvider?: string;
     }
   ): Promise<void> {
     const endTime = new Date();
@@ -212,6 +225,9 @@ export class CronJobLogger {
           details: params.details,
           errorDetails: params.errorDetails,
           stackTrace: params.stackTrace,
+          proxyUsed: params.proxyUsed,
+          proxyCountry: params.proxyCountry,
+          proxyProvider: params.proxyProvider,
           updatedAt: admin.firestore.Timestamp.now()
         }).filter(([_, value]) => value !== undefined)
       );

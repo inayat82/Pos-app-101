@@ -4,7 +4,10 @@ import React, { createContext, useContext, useState, ReactNode } from 'react';
 
 interface PageTitleContextType {
   pageTitle: string;
+  accountName: string;
   setPageTitle: (title: string) => void;
+  setAccountName: (name: string) => void;
+  setPageInfo: (accountName: string, pageTitle: string) => void;
 }
 
 const PageTitleContext = createContext<PageTitleContextType | undefined>(undefined);
@@ -15,9 +18,21 @@ interface PageTitleProviderProps {
 
 export const PageTitleProvider: React.FC<PageTitleProviderProps> = ({ children }) => {
   const [pageTitle, setPageTitle] = useState<string>('');
+  const [accountName, setAccountName] = useState<string>('');
+
+  const setPageInfo = (accountName: string, pageTitle: string) => {
+    setAccountName(accountName);
+    setPageTitle(pageTitle);
+  };
 
   return (
-    <PageTitleContext.Provider value={{ pageTitle, setPageTitle }}>
+    <PageTitleContext.Provider value={{ 
+      pageTitle, 
+      accountName, 
+      setPageTitle, 
+      setAccountName, 
+      setPageInfo 
+    }}>
       {children}
     </PageTitleContext.Provider>
   );

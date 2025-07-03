@@ -1,7 +1,7 @@
 // src/app/api/admin/takealot/check-products/route.ts
 import { NextResponse } from 'next/server';
 import { dbAdmin } from '@/lib/firebase/firebaseAdmin';
-import { getTakealotProductTotals, TakealotApiError } from '@/lib/takealotApiService';
+import { getTakealotProductTotals, TakealotApiError } from '@/modules/takealot/services';
 
 export async function POST(request: Request) {
   try {

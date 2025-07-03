@@ -2,7 +2,7 @@
 
 import admin from 'firebase-admin';
 import { Timestamp } from 'firebase-admin/firestore';
-import axios from 'axios';
+import { takealotProxyService } from '@/modules/takealot/services';
 
 // Initialize Firebase Admin SDK if not already initialized
 if (!admin.apps.length) {
@@ -265,16 +265,22 @@ export async function processJobChunk(jobId: string): Promise<ChunkProcessResult
 
       const takealotApiUrl = `https://api.takealot.com/seller${jobData.baseEndpoint}?page_number=${currentPage}&page_size=${pageSize}`;
       
-      console.log(`[PaginatedSync] Fetching page ${currentPage} for job ${jobId}`);
+      console.log(`[PaginatedSync] Fetching page ${currentPage} for job ${jobId} through proxy service`);
 
       try {
-        const response = await axios.get(takealotApiUrl, {
-          headers: { Authorization: `Key ${jobData.apiKey}` },
-          timeout: 45000,
+        const response = await takealotProxyService.get(jobData.baseEndpoint, jobData.apiKey, {
+          page_number: currentPage,
+          page_size: pageSize
+        }, {
+          adminId: jobData.adminId,
+          integrationId: jobData.adminId,
+          requestType: 'cron', // Paginated service is typically used by cron jobs
+          dataType: jobData.dataType,
+          timeout: 45000
         });
 
-        if (response.status !== 200) {
-          throw new Error(`API Error (${response.status}): ${response.data?.message || 'Unknown error'}`);
+        if (!response.success) {
+          throw new Error(`API Error (${response.statusCode}): ${response.error || 'Unknown error'}`);
         }
 
         const responseData = response.data;

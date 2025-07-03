@@ -7,9 +7,12 @@ import { BuildingStorefrontIcon, UserCircleIcon, ChevronDownIcon, ArrowLeftOnRec
 
 interface TopbarProps {
   pageTitle?: string;
+  accountName?: string;
 }
 
-const Topbar: React.FC<TopbarProps> = ({ pageTitle }) => {
+const Topbar: React.FC<TopbarProps> = ({ pageTitle, accountName }) => {
+  // Debug logging
+  console.log('Topbar - pageTitle:', pageTitle, 'accountName:', accountName);
   const authContext = useContext<AuthContextType | undefined>(AuthContext);
   const router = useRouter();
 
@@ -56,25 +59,23 @@ const Topbar: React.FC<TopbarProps> = ({ pageTitle }) => {
     setMenuOpen(false);
   };
   return (
-    <header className="w-full h-16 bg-slate-50 shadow-md flex items-center justify-between px-4 md:px-6 z-40 sticky top-0">      {/* Logo and App Name */}
-      <div className="flex items-center space-x-4">
-        <Link href="/admin/dashboard" className="flex items-center space-x-2 text-xl font-semibold text-slate-700 hover:text-indigo-600 transition-colors">
-          <BuildingStorefrontIcon className="h-7 w-7 text-indigo-600" />
-          <span>POS System</span>
-        </Link>
-        
-        {/* Page Title */}
-        {pageTitle && (
-          <div className="hidden md:flex items-center">
-            <span className="text-slate-400 mx-2">|</span>
-            <div>
-              <h1 className="text-lg font-medium text-slate-600">{pageTitle.split(' - ')[0]}</h1>
-              {pageTitle.includes(' - ') && (
-                <p className="text-xs text-slate-500 -mt-1">{pageTitle.split(' - ')[1]}</p>
-              )}
-            </div>
+    <header className="w-full h-16 bg-slate-50 shadow-md flex items-center justify-between px-4 md:px-6 z-40 sticky top-0">      {/* Account Name as Main Title, Page Title as Subtitle */}
+      <div className="flex items-center">
+        {accountName ? (
+          <div>
+            <h1 className="text-xl font-semibold text-slate-700">{accountName}</h1>
+            {pageTitle && (
+              <p className="text-sm text-slate-500 -mt-1">{pageTitle}</p>
+            )}
           </div>
-        )}
+        ) : pageTitle ? (
+          <div>
+            <h1 className="text-xl font-semibold text-slate-700">{pageTitle.split(' - ')[0]}</h1>
+            {pageTitle.includes(' - ') && (
+              <p className="text-sm text-slate-500 -mt-1">{pageTitle.split(' - ')[1]}</p>
+            )}
+          </div>
+        ) : null}
       </div>
 
       {/* User Menu */}

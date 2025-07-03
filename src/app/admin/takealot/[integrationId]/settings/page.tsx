@@ -12,7 +12,6 @@ import APIDataChecksCard from './components/APIDataChecksCard';
 import SyncStrategyPreferencesCard from './components/SyncStrategyPreferencesCard';
 import APICallLogsCard from './components/APICallLogsCard';
 import DataCleanupCard from './components/DataCleanupCard';
-import SyncJobMonitor from '@/components/admin/SyncJobMonitor';
 
 interface SettingsPageProps {
   params: Promise<{
@@ -152,18 +151,6 @@ export default function SettingsPage({ params }: SettingsPageProps) {
           showMessage={showMessage}
           loadApiLogs={loadApiLogs}
         />
-
-        {/* Real-time Sync Job Monitor */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-          <h2 className="text-xl font-semibold text-gray-900 mb-4 flex items-center">
-            <span className="w-2 h-2 bg-blue-500 rounded-full mr-3"></span>
-            Live Sync Progress Monitor
-          </h2>
-          <p className="text-gray-600 mb-4">
-            Monitor real-time progress of paginated sync jobs. Large data syncs are now processed in chunks to prevent timeouts.
-          </p>
-          <SyncJobMonitor adminId={currentUser?.uid} />
-        </div>
         
         {/* API Call Logs */}
         <APICallLogsCard 

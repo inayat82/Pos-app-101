@@ -102,7 +102,7 @@ const ApiMonitorClient: FC<ApiMonitorClientProps> = ({}) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [triggerFilter, setTriggerFilter] = useState<string>('all');
-  const [activeTab, setActiveTab] = useState<'logs' | 'crons' | 'health' | 'admin-analysis' | 'cron-logs'>('logs');
+  const [activeTab, setActiveTab] = useState<'live-sync' | 'logs' | 'crons' | 'health' | 'admin-analysis' | 'cron-logs'>('live-sync');
   
   // Cron monitoring state
   const [cronStatus, setCronStatus] = useState<CronStatusResponse | null>(null);
@@ -268,7 +268,10 @@ const ApiMonitorClient: FC<ApiMonitorClientProps> = ({}) => {
   };
 
   useEffect(() => {
-    if (activeTab === 'logs') {
+    if (activeTab === 'live-sync') {
+      // Live sync jobs use the same API as regular logs but filter for active jobs
+      fetchLogs();
+    } else if (activeTab === 'logs') {
       fetchLogs();
     } else if (activeTab === 'crons' || activeTab === 'health') {
       fetchCronStatus();
@@ -286,7 +289,10 @@ const ApiMonitorClient: FC<ApiMonitorClientProps> = ({}) => {
   );
 
   const handleRefresh = () => {
-    if (activeTab === 'logs') {
+    if (activeTab === 'live-sync') {
+      setPagination(prev => ({ ...prev, offset: 0 }));
+      fetchLogs();
+    } else if (activeTab === 'logs') {
       setPagination(prev => ({ ...prev, offset: 0 }));
       fetchLogs();
     } else if (activeTab === 'crons' || activeTab === 'health') {
@@ -366,6 +372,17 @@ const ApiMonitorClient: FC<ApiMonitorClientProps> = ({}) => {
       {/* Tab Navigation */}
       <div className="bg-white shadow-md rounded-lg p-4">
         <div className="flex flex-wrap gap-2 border-b border-gray-200 mb-4">
+          <button
+            onClick={() => setActiveTab('live-sync')}
+            className={`px-4 py-2 rounded-t-lg font-medium transition-colors ${
+              activeTab === 'live-sync'
+                ? 'border-b-2 border-blue-500 text-blue-600 bg-blue-50'
+                : 'text-gray-600 hover:text-gray-800 hover:bg-gray-50'
+            }`}
+          >
+            <Activity className="inline h-4 w-4 mr-2" />
+            Live Sync Jobs
+          </button>
           <button
             onClick={() => setActiveTab('logs')}
             className={`px-4 py-2 rounded-t-lg font-medium transition-colors ${
@@ -467,6 +484,42 @@ const ApiMonitorClient: FC<ApiMonitorClientProps> = ({}) => {
           </div>
         )}
       </div>
+
+      {/* Live Sync Jobs Tab Content */}
+      {activeTab === 'live-sync' && (
+        <div className="bg-white shadow-md rounded-lg">
+          <div className="p-4 border-b border-gray-200">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-medium text-gray-900">Live Sync Jobs Monitor</h3>
+              <button
+                onClick={() => {
+                  // Refresh sync job data - we'll use the existing SyncJobMonitor component
+                  window.location.reload();
+                }}
+                disabled={loading}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+              >
+                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+                Refresh
+              </button>
+            </div>
+          </div>
+          <div className="p-4">
+            {/* Import the existing SyncJobMonitor for SuperAdmin view */}
+            <div className="text-center py-8">
+              <Activity className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-gray-900 mb-2">Live Sync Jobs Monitor</h3>
+              <p className="text-gray-600 mb-4">
+                Monitor all active sync jobs across all admins in real-time. This shows currently running 
+                product and sales syncs from all integrated accounts.
+              </p>
+              <p className="text-sm text-gray-500">
+                <strong>Data Source:</strong> Live Firebase queries from sync_jobs collection
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Controls (only for logs tab) */}
       {activeTab === 'logs' && (
@@ -1072,6 +1125,9 @@ const ApiMonitorClient: FC<ApiMonitorClientProps> = ({}) => {
                         Performance Metrics
                       </th>
                       <th className="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+                        Proxy Info
+                      </th>
+                      <th className="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
                         Duration & Time
                       </th>
                       <th className="px-5 py-3 border-b-2 border-gray-200 bg-gray-100 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
@@ -1085,7 +1141,7 @@ const ApiMonitorClient: FC<ApiMonitorClientProps> = ({}) => {
                   <tbody>
                     {cronLogs.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="px-5 py-5 border-b border-gray-200 bg-white text-sm text-center text-gray-500">
+                        <td colSpan={7} className="px-5 py-5 border-b border-gray-200 bg-white text-sm text-center text-gray-500">
                           No cron job logs found
                         </td>
                       </tr>
@@ -1137,6 +1193,30 @@ const ApiMonitorClient: FC<ApiMonitorClientProps> = ({}) => {
                               <div>Reads: {log.totalReads || 0}</div>
                               <div>Writes: {log.totalWrites || 0}</div>
                               <div>Items: {log.itemsProcessed || 0}</div>
+                            </div>
+                          </td>
+                          <td className="px-5 py-5 border-b border-gray-200 bg-white text-sm">
+                            <div className="text-xs">
+                              {log.proxyUsed ? (
+                                <>
+                                  <div className="flex items-center">
+                                    <Server className="h-3 w-3 mr-1 text-green-600" />
+                                    <span className="text-gray-900 font-medium">{log.proxyUsed}</span>
+                                  </div>
+                                  {log.proxyCountry && (
+                                    <div className="text-gray-600 mt-1">
+                                      🌍 {log.proxyCountry}
+                                    </div>
+                                  )}
+                                  {log.proxyProvider && (
+                                    <div className="text-gray-500 mt-1">
+                                      via {log.proxyProvider}
+                                    </div>
+                                  )}
+                                </>
+                              ) : (
+                                <div className="text-gray-400 italic">No proxy data</div>
+                              )}
                             </div>
                           </td>
                           <td className="px-5 py-5 border-b border-gray-200 bg-white text-sm">

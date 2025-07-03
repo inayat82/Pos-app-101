@@ -12,7 +12,6 @@ import {
   FiServer
 } from 'react-icons/fi';
 import { useAuth } from '@/context/AuthContext';
-import { webshareService } from '@/lib/services/webshareIntegrationService';
 import { db } from '@/lib/firebase/firebase';
 import { 
   collection, 
@@ -135,13 +134,26 @@ const SuperAdminAnalytics: React.FC = () => {
       // Calculate user growth (simplified - you'd want to group by date)
       const userGrowth: GrowthData[] = [];
 
-      // Webshare proxy stats
-      const proxyStats = webshareService.getProxyStats();
-      const webshareProxyStats = {
-        totalProxies: proxyStats.totalProxies,
-        lastRefresh: proxyStats.lastRefresh,
-        isConnected: proxyStats.totalProxies > 0,
+      // Webshare proxy stats - fetch from API instead of direct service
+      let webshareProxyStats = {
+        totalProxies: 0,
+        lastRefresh: null as Date | null,
+        isConnected: false,
       };
+      
+      try {
+        const response = await fetch('/api/superadmin/webshare-unified');
+        if (response.ok) {
+          const systemStatus = await response.json();
+          webshareProxyStats = {
+            totalProxies: systemStatus.totalProxies || 0,
+            lastRefresh: systemStatus.lastSync ? new Date(systemStatus.lastSync) : null,
+            isConnected: systemStatus.isConfigured && systemStatus.isEnabled,
+          };
+        }
+      } catch (error) {
+        console.error('Failed to fetch webshare status:', error);
+      }
 
       setAnalytics({
         totalUsers,
