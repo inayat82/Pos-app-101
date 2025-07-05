@@ -27,9 +27,9 @@ export async function GET(request: NextRequest) {
     const integrationData = integrationSnap.data();
     const adminId = integrationData?.adminId;
 
-    // Query logs for this integration, with fallback to adminId if integrationId logs are not found
+    // Query logs for this integration from centralized logs collection
     let totalSnapshot = await db
-      .collection('cronJobLogs')
+      .collection('logs')
       .where('integrationId', '==', integrationId)
       .get();
     
@@ -37,7 +37,7 @@ export async function GET(request: NextRequest) {
     if (totalSnapshot.empty && adminId) {
       console.log(`No logs found for integrationId ${integrationId}, trying adminId ${adminId}`);
       totalSnapshot = await db
-        .collection('cronJobLogs')
+        .collection('logs')
         .where('adminId', '==', adminId)
         .get();
     }

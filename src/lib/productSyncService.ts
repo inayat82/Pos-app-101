@@ -379,23 +379,49 @@ export class ProductSyncService {
         
         console.log(`[ProductSync] Fetching products page ${currentPage} through proxy service`);
         
-        // Use the new proxy service instead of direct fetch
-        const response = await takealotProxyService.get(endpoint, apiKey, params, {
-          adminId: this.integrationId, // Use integrationId as adminId for logging
-          integrationId: this.integrationId,
-          requestType: triggerType || 'manual',
-          dataType: 'products',
-          timeout: 60000
-        });
+        // Enhanced error handling with retries for API requests
+        let retryCount = 0;
+        const maxRetries = 3;
+        let response;
+        
+        while (retryCount < maxRetries) {
+          try {
+            // Use the new proxy service instead of direct fetch
+            response = await takealotProxyService.get(endpoint, apiKey, params, {
+              adminId: this.integrationId, // Use integrationId as adminId for logging
+              integrationId: this.integrationId,
+              requestType: triggerType || 'manual',
+              dataType: 'products',
+              timeout: 60000
+            });
 
-        if (!response.success) {
-          throw new Error(`API request failed: ${response.error}`);
+            if (response.success) {
+              break; // Success, exit retry loop
+            } else {
+              console.warn(`[ProductSync] API request failed (attempt ${retryCount + 1}/${maxRetries}): ${response.error}`);
+              if (retryCount === maxRetries - 1) {
+                throw new Error(`API request failed after ${maxRetries} attempts: ${response.error}`);
+              }
+            }
+          } catch (error: any) {
+            console.error(`[ProductSync] Error on attempt ${retryCount + 1}/${maxRetries}:`, error);
+            if (retryCount === maxRetries - 1) {
+              throw error;
+            }
+          }
+          
+          retryCount++;
+          
+          // Exponential backoff delay
+          const delay = Math.min(1000 * Math.pow(2, retryCount - 1), 5000);
+          console.log(`[ProductSync] Waiting ${delay}ms before retry...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
         }
 
-        const data = response.data;
+        const data = response!.data;
         
         // Capture proxy information for logging (first successful request)
-        if (response.proxyUsed && !this.proxyInfo.proxyUsed) {
+        if (response && response.proxyUsed && !this.proxyInfo.proxyUsed) {
           this.proxyInfo.proxyUsed = response.proxyUsed;
           this.proxyInfo.proxyProvider = 'Webshare';
           // Extract country from proxy logs (look for (ZA) pattern in the logs)
@@ -407,7 +433,7 @@ export class ProductSyncService {
         console.log(`[ProductSync] API Response for page ${currentPage}:`, {
           totalRecords: data.total_results || 'unknown',
           currentPageRecords: data.offers?.length || 0,
-          proxyUsed: response.proxyUsed
+          proxyUsed: response?.proxyUsed || 'unknown'
         });
         
         // Extract product records

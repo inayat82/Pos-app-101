@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
     console.log(`[Admin ClearCronLogs] Clearing logs for admin: ${adminId}`);
     
     // Clear logs for this admin only
-    const adminLogsSnapshot = await db.collection('cronJobLogs')
+    const adminLogsSnapshot = await db.collection('logs')
       .where('adminId', '==', adminId)
       .get();
     
@@ -84,7 +84,7 @@ export async function GET(request: NextRequest) {
     }
     
     // Get log statistics for this admin
-    const adminLogsSnapshot = await db.collection('cronJobLogs')
+    const adminLogsSnapshot = await db.collection('logs')
       .where('adminId', '==', adminId)
       .get();
     const totalLogs = adminLogsSnapshot.size;
@@ -92,7 +92,7 @@ export async function GET(request: NextRequest) {
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
     
-    const oldLogsSnapshot = await db.collection('cronJobLogs')
+    const oldLogsSnapshot = await db.collection('logs')
       .where('adminId', '==', adminId)
       .where('createdAt', '<', admin.firestore.Timestamp.fromDate(sevenDaysAgo))
       .get();

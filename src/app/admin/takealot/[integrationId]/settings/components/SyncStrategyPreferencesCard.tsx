@@ -69,6 +69,28 @@ const SyncStrategyPreferencesCard: React.FC<SyncStrategyPreferencesCardProps> = 
     [key: string]: FetchOperation
   }>({});
 
+  // State for proxy testing
+  const [proxyTestResult, setProxyTestResult] = useState<{
+    isRunning: boolean;
+    result: any;
+    error: string | null;
+  }>({
+    isRunning: false,
+    result: null,
+    error: null
+  });
+
+  // State for diagnostics
+  const [diagnosticsResult, setDiagnosticsResult] = useState<{
+    isRunning: boolean;
+    result: any;
+    error: string | null;
+  }>({
+    isRunning: false,
+    result: null,
+    error: null
+  });
+
   // Sync status data for strategy cards
   const [syncStatusData, setSyncStatusData] = useState<{
     [key: string]: {
@@ -621,6 +643,113 @@ const SyncStrategyPreferencesCard: React.FC<SyncStrategyPreferencesCardProps> = 
     }
   };
 
+  // Test proxy connection
+  const handleProxyTest = async () => {
+    if (!integrationId) {
+      showMessage('error', 'Integration ID is missing.');
+      return;
+    }
+
+    setProxyTestResult({
+      isRunning: true,
+      result: null,
+      error: null
+    });
+
+    try {
+      console.log('Starting proxy connection test...');
+      
+      const response = await fetch('/api/admin/takealot/test-proxy-connection', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          integrationId
+        })
+      });
+
+      const result = await response.json();
+      
+      if (result.success) {
+        setProxyTestResult({
+          isRunning: false,
+          result: result.details,
+          error: null
+        });
+        showMessage('success', `Proxy test successful! Response time: ${result.details.responseTime}ms`);
+      } else {
+        setProxyTestResult({
+          isRunning: false,
+          result: result.details || null,
+          error: result.error || 'Unknown error'
+        });
+        showMessage('error', `Proxy test failed: ${result.error}`);
+      }
+    } catch (error: any) {
+      console.error('Proxy test error:', error);
+      setProxyTestResult({
+        isRunning: false,
+        result: null,
+        error: error.message
+      });
+      showMessage('error', `Proxy test failed: ${error.message}`);
+    }
+  };
+
+  // Run diagnostics
+  const handleDiagnostics = async () => {
+    if (!integrationId) {
+      showMessage('error', 'Integration ID is missing.');
+      return;
+    }
+
+    setDiagnosticsResult({
+      isRunning: true,
+      result: null,
+      error: null
+    });
+
+    try {
+      console.log('Running sync diagnostics...');
+      
+      const response = await fetch(`/api/admin/takealot/diagnose-sync-issues?integrationId=${integrationId}`);
+      const result = await response.json();
+      
+      if (result.success) {
+        setDiagnosticsResult({
+          isRunning: false,
+          result: result.diagnostics,
+          error: null
+        });
+        
+        const status = result.diagnostics.overall.status;
+        if (status === 'passed') {
+          showMessage('success', 'All diagnostics passed! Sync system is healthy.');
+        } else if (status === 'warning') {
+          showMessage('error', 'Some diagnostics have warnings. Check the details.');
+        } else {
+          showMessage('error', 'Diagnostics found issues that need attention.');
+        }
+      } else {
+        setDiagnosticsResult({
+          isRunning: false,
+          result: null,
+          error: result.error || 'Unknown error'
+        });
+        showMessage('error', `Diagnostics failed: ${result.error}`);
+      }
+    } catch (error: any) {
+      console.error('Diagnostics error:', error);
+      setDiagnosticsResult({
+        isRunning: false,
+        result: null,
+        error: error.message
+      });
+      showMessage('error', `Diagnostics failed: ${error.message}`);
+    }
+  };
+
   // Load data on component mount
   useEffect(() => {
     if (currentUser?.uid && integrationId) {
@@ -636,6 +765,142 @@ const SyncStrategyPreferencesCard: React.FC<SyncStrategyPreferencesCardProps> = 
           <h2 className="text-xl font-semibold text-gray-900 mb-2">Sync Strategy Preferences</h2>
           <p className="text-sm text-gray-600">Configure automatic and manual data synchronization strategies. Auto-sync preferences save automatically when toggled.</p>
         </div>
+      </div>
+
+      {/* Proxy Connection Test Section */}
+      <div className="mb-8 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-6 border border-blue-200">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-800 flex items-center">
+              <div className="w-2 h-2 bg-blue-500 rounded-full mr-3"></div>
+              Sync System Diagnostics
+            </h3>
+            <p className="text-sm text-gray-600 mt-1">Test proxy connection and diagnose potential sync issues</p>
+          </div>
+          <div className="flex space-x-3">
+            <button
+              onClick={handleProxyTest}
+              disabled={proxyTestResult.isRunning}
+              className={`px-4 py-2 rounded-lg font-medium text-sm transition-all duration-200 ${
+                proxyTestResult.isRunning
+                  ? 'bg-gray-400 text-gray-600 cursor-not-allowed'
+                  : 'bg-blue-600 hover:bg-blue-700 text-white shadow-md hover:shadow-lg'
+              }`}
+            >
+              {proxyTestResult.isRunning ? (
+                <div className="flex items-center space-x-2">
+                  <div className="w-4 h-4 border-2 border-gray-600 border-t-transparent rounded-full animate-spin"></div>
+                  <span>Testing...</span>
+                </div>
+              ) : (
+                'Test Connection'
+              )}
+            </button>
+            
+            <button
+              onClick={handleDiagnostics}
+              disabled={diagnosticsResult.isRunning}
+              className={`px-4 py-2 rounded-lg font-medium text-sm transition-all duration-200 ${
+                diagnosticsResult.isRunning
+                  ? 'bg-gray-400 text-gray-600 cursor-not-allowed'
+                  : 'bg-purple-600 hover:bg-purple-700 text-white shadow-md hover:shadow-lg'
+              }`}
+            >
+              {diagnosticsResult.isRunning ? (
+                <div className="flex items-center space-x-2">
+                  <div className="w-4 h-4 border-2 border-gray-600 border-t-transparent rounded-full animate-spin"></div>
+                  <span>Scanning...</span>
+                </div>
+              ) : (
+                'Run Diagnostics'
+              )}
+            </button>
+          </div>
+        </div>
+        
+        {/* Test Results */}
+        {(proxyTestResult.result || proxyTestResult.error) && (
+          <div className={`mt-4 p-4 rounded-lg ${
+            proxyTestResult.error ? 'bg-red-50 border border-red-200' : 'bg-green-50 border border-green-200'
+          }`}>
+            {proxyTestResult.error ? (
+              <div>
+                <p className="text-red-800 font-medium">Connection Test Failed</p>
+                <p className="text-red-600 text-sm mt-1">{proxyTestResult.error}</p>
+              </div>
+            ) : (
+              <div>
+                <p className="text-green-800 font-medium">Connection Test Successful</p>
+                <div className="grid grid-cols-2 gap-4 mt-2 text-sm">
+                  <div>
+                    <span className="text-gray-600">Response Time:</span>
+                    <span className="font-medium text-green-700 ml-1">
+                      {proxyTestResult.result?.responseTime}ms
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-gray-600">Proxy Used:</span>
+                    <span className="font-medium text-green-700 ml-1">
+                      {proxyTestResult.result?.proxyUsed || 'Unknown'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-gray-600">Status Code:</span>
+                    <span className="font-medium text-green-700 ml-1">
+                      {proxyTestResult.result?.statusCode || 'N/A'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Diagnostics Results */}
+        {diagnosticsResult.result && (
+          <div className="mt-4 space-y-3">
+            <div className={`p-4 rounded-lg ${
+              diagnosticsResult.result.overall.status === 'passed' ? 'bg-green-50 border border-green-200' :
+              diagnosticsResult.result.overall.status === 'warning' ? 'bg-yellow-50 border border-yellow-200' :
+              'bg-red-50 border border-red-200'
+            }`}>
+              <p className={`font-medium ${
+                diagnosticsResult.result.overall.status === 'passed' ? 'text-green-800' :
+                diagnosticsResult.result.overall.status === 'warning' ? 'text-yellow-800' :
+                'text-red-800'
+              }`}>
+                Diagnostics: {diagnosticsResult.result.overall.summary}
+              </p>
+              
+              <div className="grid grid-cols-2 gap-4 mt-3 text-sm">
+                {Object.entries(diagnosticsResult.result.checks).map(([checkName, check]: [string, any]) => (
+                  <div key={checkName} className="flex items-center space-x-2">
+                    <div className={`w-2 h-2 rounded-full ${
+                      check.status === 'passed' ? 'bg-green-500' :
+                      check.status === 'warning' ? 'bg-yellow-500' : 'bg-red-500'
+                    }`}></div>
+                    <span className="text-gray-700 capitalize">{checkName.replace(/([A-Z])/g, ' $1')}</span>
+                    <span className={`text-xs font-medium ${
+                      check.status === 'passed' ? 'text-green-600' :
+                      check.status === 'warning' ? 'text-yellow-600' : 'text-red-600'
+                    }`}>
+                      {check.status}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              
+              {diagnosticsResult.result.checks.proxies && (
+                <div className="mt-3 text-sm text-gray-600">
+                  <span>Proxies: {diagnosticsResult.result.checks.proxies.validProxies}/{diagnosticsResult.result.checks.proxies.totalProxies} valid</span>
+                  {diagnosticsResult.result.checks.proxies.southAfricanProxies > 0 && (
+                    <span className="ml-3">({diagnosticsResult.result.checks.proxies.southAfricanProxies} ZA proxies)</span>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
       
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">

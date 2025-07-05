@@ -56,14 +56,10 @@ export default function AutoPriceSystemMonitor() {
     try {
       setLoading(true);
 
-      // Fetch proxy stats
-      const proxyResponse = await fetch('/api/superadmin/webshare-request?action=proxy-stats');
-      if (proxyResponse.ok) {
-        const proxyData = await proxyResponse.json();
-        setProxyStats(proxyData.data);
-      }
+      // Note: Modified to avoid automatic proxy fetching - only fetch when explicitly requested
+      console.log('🔄 Auto Price Monitor: Loading cached data only...');
 
-      // Fetch request logs
+      // Fetch request logs only (not proxy stats to avoid background proxy fetching)
       const logsResponse = await fetch('/api/superadmin/webshare-request?action=request-logs&limit=50');
       if (logsResponse.ok) {
         const logsData = await logsResponse.json();
@@ -87,13 +83,25 @@ export default function AutoPriceSystemMonitor() {
         });
       }
 
-      // Determine system health
+      // Use cached proxy stats if available, don't fetch fresh data automatically
+      if (!proxyStats) {
+        setProxyStats({
+          totalProxies: 0,
+          workingProxies: 0,
+          lastRefresh: null,
+          currentProxyIndex: 0,
+          requestsToday: 0,
+          successRate: 0
+        });
+      }
+
+      // Determine system health based on available data
       const issues: string[] = [];
       let status: 'healthy' | 'warning' | 'critical' = 'healthy';
 
       if (!proxyStats || proxyStats.totalProxies === 0) {
-        issues.push('No proxies available');
-        status = 'critical';
+        issues.push('Proxy data not loaded - click refresh to update');
+        status = 'warning';
       } else if (proxyStats.workingProxies < proxyStats.totalProxies * 0.5) {
         issues.push('Low proxy availability');
         status = 'warning';
@@ -101,7 +109,7 @@ export default function AutoPriceSystemMonitor() {
 
       if (scrapingStats && scrapingStats.successRateToday < 70) {
         issues.push('Low scraping success rate');
-        status = status === 'critical' ? 'critical' : 'warning';
+        status = 'warning';
       }
 
       setSystemHealth({
@@ -118,12 +126,33 @@ export default function AutoPriceSystemMonitor() {
     }
   };
 
+  const fetchFullData = async () => {
+    try {
+      setRefreshing(true);
+      console.log('🔄 Auto Price Monitor: Fetching fresh proxy data (manual refresh)...');
+
+      // Fetch proxy stats only when user explicitly refreshes
+      const proxyResponse = await fetch('/api/superadmin/webshare-request?action=proxy-stats');
+      if (proxyResponse.ok) {
+        const proxyData = await proxyResponse.json();
+        setProxyStats(proxyData.data);
+      }
+
+      // Also refresh other data
+      await fetchData();
+    } catch (error) {
+      console.error('Error fetching fresh Auto Price monitor data:', error);
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   const refreshProxies = async () => {
     try {
       setRefreshing(true);
       const response = await fetch('/api/superadmin/webshare-request?action=refresh-proxies');
       if (response.ok) {
-        await fetchData(); // Refresh data after proxy refresh
+        await fetchFullData(); // Refresh data after proxy refresh
       }
     } catch (error) {
       console.error('Error refreshing proxies:', error);
@@ -133,11 +162,10 @@ export default function AutoPriceSystemMonitor() {
   };
 
   useEffect(() => {
+    // Load initial data on mount only
     fetchData();
-    
-    // Auto-refresh every 30 seconds
-    const interval = setInterval(fetchData, 30000);
-    return () => clearInterval(interval);
+    // Note: Removed automatic interval refresh to prevent background proxy fetching
+    // Auto Price system monitoring should only fetch data when explicitly requested by user
   }, []);
 
   const getStatusColor = (status: string) => {
@@ -177,7 +205,7 @@ export default function AutoPriceSystemMonitor() {
       <div className="flex items-center justify-between">
         <h2 className="text-2xl font-bold">Auto Price System Monitor</h2>
         <div className="flex space-x-2">
-          <Button onClick={fetchData} variant="outline" size="sm">
+          <Button onClick={fetchFullData} variant="outline" size="sm">
             Refresh Data
           </Button>
           <Button 
@@ -315,7 +343,7 @@ export default function AutoPriceSystemMonitor() {
                 className="w-full" 
                 size="sm" 
                 variant="outline"
-                onClick={fetchData}
+                onClick={fetchFullData}
               >
                 Run System Health Check
               </Button>

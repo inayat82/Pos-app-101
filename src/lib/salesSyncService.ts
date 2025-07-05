@@ -9,6 +9,12 @@ interface SalesRecord {
   selling_price?: number;
   order_status?: string;
   total_fee?: number;
+  customer_name?: string;
+  buyer_name?: string;
+  customer?: string;
+  status?: string;
+  sale_status?: string;
+  gross_sale?: number;
   [key: string]: any;
 }
 
@@ -190,13 +196,19 @@ export class SalesSyncService {
             .limit(1)
             .get();
 
-          // Prepare the record for saving
+          // Prepare the record for saving with calculated fields
           const firestoreRecord: SalesRecord = {
             ...record,
             integrationId: this.integrationId,
             fetchedAt: new Date().toISOString(),
             source: 'takealot_api',
-            lastUpdatedAt: new Date().toISOString()
+            lastUpdatedAt: new Date().toISOString(),
+            // Add calculated gross sale (Selling Price - Total Fee)
+            gross_sale: this.calculateGrossSale(record.selling_price, record.total_fee),
+            // Ensure customer name is properly mapped
+            customer_name: record.customer_name || record.buyer_name || record.customer || '',
+            // Ensure sale status is properly mapped  
+            sale_status: record.order_status || record.status || record.sale_status || ''
           };
 
           if (existingQuery.empty) {
@@ -220,7 +232,11 @@ export class SalesSyncService {
                 integrationId: this.integrationId,
                 fetchedAt: new Date().toISOString(),
                 source: 'takealot_api',
-                lastUpdatedAt: new Date().toISOString()
+                lastUpdatedAt: new Date().toISOString(),
+                // Add calculated fields during updates too
+                gross_sale: this.calculateGrossSale(record.selling_price, record.total_fee),
+                customer_name: record.customer_name || record.buyer_name || record.customer || '',
+                sale_status: record.order_status || record.status || record.sale_status || ''
               };
               
               // Only add incoming fields that have valid values
@@ -269,7 +285,10 @@ export class SalesSyncService {
       'commission',
       'shipping_fee',
       'delivery_date',
-      'tracking_number'
+      'tracking_number',
+      'customer_name',
+      'sale_status',
+      'gross_sale'
     ];
 
     for (const field of fieldsToCompare) {
@@ -296,6 +315,15 @@ export class SalesSyncService {
     }
 
     return false;
+  }
+
+  /**
+   * Calculate gross sale amount (Selling Price - Total Fee)
+   */
+  private calculateGrossSale(sellingPrice?: number, totalFee?: number): number {
+    const selling = sellingPrice || 0;
+    const fee = totalFee || 0;
+    return Math.max(0, selling - fee); // Ensure non-negative result
   }
 
   /**
@@ -337,23 +365,49 @@ export class SalesSyncService {
         
         console.log(`[SalesSync] Fetching sales page ${currentPage} through proxy service`);
         
-        // Use the new proxy service instead of direct fetch
-        const response = await takealotProxyService.get(endpoint, apiKey, params, {
-          adminId: this.integrationId, // Use integrationId as adminId for logging
-          integrationId: this.integrationId,
-          requestType: triggerType || 'manual',
-          dataType: 'sales',
-          timeout: 60000
-        });
+        // Enhanced error handling with retries for API requests
+        let retryCount = 0;
+        const maxRetries = 3;
+        let response;
+        
+        while (retryCount < maxRetries) {
+          try {
+            // Use the new proxy service instead of direct fetch
+            response = await takealotProxyService.get(endpoint, apiKey, params, {
+              adminId: this.integrationId, // Use integrationId as adminId for logging
+              integrationId: this.integrationId,
+              requestType: triggerType || 'manual',
+              dataType: 'sales',
+              timeout: 60000
+            });
 
-        if (!response.success) {
-          throw new Error(`API request failed: ${response.error}`);
+            if (response.success) {
+              break; // Success, exit retry loop
+            } else {
+              console.warn(`[SalesSync] API request failed (attempt ${retryCount + 1}/${maxRetries}): ${response.error}`);
+              if (retryCount === maxRetries - 1) {
+                throw new Error(`API request failed after ${maxRetries} attempts: ${response.error}`);
+              }
+            }
+          } catch (error: any) {
+            console.error(`[SalesSync] Error on attempt ${retryCount + 1}/${maxRetries}:`, error);
+            if (retryCount === maxRetries - 1) {
+              throw error;
+            }
+          }
+          
+          retryCount++;
+          
+          // Exponential backoff delay
+          const delay = Math.min(1000 * Math.pow(2, retryCount - 1), 5000);
+          console.log(`[SalesSync] Waiting ${delay}ms before retry...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
         }
 
-        const data = response.data;
+        const data = response!.data;
         
         // Capture proxy information for logging (first successful request)
-        if (response.proxyUsed && !this.proxyInfo.proxyUsed) {
+        if (response && response.proxyUsed && !this.proxyInfo.proxyUsed) {
           this.proxyInfo.proxyUsed = response.proxyUsed;
           this.proxyInfo.proxyProvider = 'Webshare';
           // Extract country from proxy logs (look for (ZA) pattern in the logs)
@@ -366,7 +420,7 @@ export class SalesSyncService {
           totalRecords: data.page_summary?.total || 'unknown',
           currentPageRecords: data.sales?.length || 0,
           pageInfo: data.page_summary || 'no page summary',
-          proxyUsed: response.proxyUsed
+          proxyUsed: response?.proxyUsed || 'unknown'
         });
         
         // Extract sales records

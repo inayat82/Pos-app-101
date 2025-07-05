@@ -50,7 +50,7 @@ export async function GET(request: NextRequest) {
       const yesterday = new Date();
       yesterday.setHours(yesterday.getHours() - 24);
       
-      const recentLogsSnapshot = await db.collection('cronJobLogs')
+      const recentLogsSnapshot = await db.collection('logs')
         .where('timestamp', '>=', admin.firestore.Timestamp.fromDate(yesterday))
         .orderBy('timestamp', 'desc')
         .limit(50)

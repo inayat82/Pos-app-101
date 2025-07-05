@@ -683,7 +683,7 @@ export async function getSyncJobStats(adminId?: string): Promise<{
     const completedJobs = completedJobsSnapshot.docs.map(doc => doc.data() as SyncJobState);
     
     // Get error logs from last 24h from centralized logging
-    let errorLogsQuery = db.collection('cronJobLogs')
+    let errorLogsQuery = db.collection('logs')
       .where('timestamp', '>=', Timestamp.fromDate(yesterday))
       .where('status', 'in', ['failure', 'timeout', 'cancelled']);
     
@@ -694,7 +694,7 @@ export async function getSyncJobStats(adminId?: string): Promise<{
     const errorLogsSnapshot = await errorLogsQuery.get();
     
     // Get total logs for error rate calculation from centralized logging
-    let totalLogsQuery = db.collection('cronJobLogs')
+    let totalLogsQuery = db.collection('logs')
       .where('timestamp', '>=', Timestamp.fromDate(yesterday));
     
     if (adminId) {

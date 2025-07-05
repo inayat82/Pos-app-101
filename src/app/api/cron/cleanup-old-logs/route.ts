@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
     let hasMore = true;
     
     while (hasMore) {
-      const oldLogsSnapshot = await db.collection('cronJobLogs')
+      const oldLogsSnapshot = await db.collection('logs')
         .where('createdAt', '<', admin.firestore.Timestamp.fromDate(cutoffDate))
         .limit(batchSize)
         .get();
@@ -69,7 +69,7 @@ export async function POST(request: NextRequest) {
     }
     
     // Get remaining log count for reporting
-    const remainingLogsSnapshot = await db.collection('cronJobLogs').get();
+    const remainingLogsSnapshot = await db.collection('logs').get();
     const remainingCount = remainingLogsSnapshot.size;
     
     console.log(`[LogCleanup] Cleanup completed. Deleted: ${totalDeleted}, Remaining: ${remainingCount}`);
@@ -100,10 +100,10 @@ export async function GET(request: NextRequest) {
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
     
-    const totalLogsSnapshot = await db.collection('cronJobLogs').get();
+    const totalLogsSnapshot = await db.collection('logs').get();
     const totalLogs = totalLogsSnapshot.size;
     
-    const oldLogsSnapshot = await db.collection('cronJobLogs')
+    const oldLogsSnapshot = await db.collection('logs')
       .where('createdAt', '<', admin.firestore.Timestamp.fromDate(cutoffDate))
       .get();
     const oldLogs = oldLogsSnapshot.size;

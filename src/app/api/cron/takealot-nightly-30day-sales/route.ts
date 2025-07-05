@@ -1,4 +1,4 @@
-// src/app/api/cron/takealot-hourly-30day-sales/route.ts
+// src/app/api/cron/takealot-nightly-30day-sales/route.ts
 
 import { NextRequest, NextResponse } from 'next/server';
 import { SalesSyncService } from '@/lib/salesSyncService';

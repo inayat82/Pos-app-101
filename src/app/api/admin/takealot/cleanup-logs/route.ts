@@ -13,7 +13,7 @@ export async function POST(request: NextRequest) {  try {
 
     // Query all logs for this integration from centralized logging
     const logsSnapshot = await db
-      .collection('cronJobLogs')
+      .collection('logs')
       .where('integrationId', '==', integrationId)
       .get();
 

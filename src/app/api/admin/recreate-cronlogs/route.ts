@@ -1,10 +1,10 @@
-// Simple endpoint to recreate cronJobLogs collection
+// Simple endpoint to recreate logs collection
 import { NextRequest, NextResponse } from 'next/server';
 import { dbAdmin as db } from '@/lib/firebase/firebaseAdmin';
 
 export async function POST(request: NextRequest) {
   try {
-    console.log('🔧 Creating cronJobLogs collection...');
+    console.log('🔧 Creating logs collection...');
     
     // Create initial log entry to establish the collection
     const initLog = {
@@ -17,7 +17,7 @@ export async function POST(request: NextRequest) {
       cronJobType: 'system',
       triggerType: 'manual',
       status: 'success',
-      message: 'cronJobLogs collection recreated after deletion',
+      message: 'logs collection recreated after deletion',
       duration: 0,
       itemsProcessed: 0,
       metadata: {
@@ -27,27 +27,27 @@ export async function POST(request: NextRequest) {
     };
     
     // Add the document to create the collection
-    const docRef = await db.collection('cronJobLogs').add(initLog);
-    console.log('✅ cronJobLogs collection created with document ID:', docRef.id);
+    const docRef = await db.collection('logs').add(initLog);
+    console.log('✅ logs collection created with document ID:', docRef.id);
     
     // Verify it was created
-    const verifyDoc = await db.collection('cronJobLogs').doc(docRef.id).get();
+    const verifyDoc = await db.collection('logs').doc(docRef.id).get();
     const collectionExists = verifyDoc.exists;
     
     return NextResponse.json({
       success: true,
-      message: 'cronJobLogs collection successfully recreated',
+      message: 'logs collection successfully recreated',
       documentId: docRef.id,
       collectionExists,
       details: 'You can now run manual syncs and they will be logged properly'
     });
     
   } catch (error: any) {
-    console.error('❌ Error creating cronJobLogs collection:', error);
+    console.error('❌ Error creating logs collection:', error);
     return NextResponse.json({
       success: false,
       error: error.message,
-      details: 'Failed to recreate cronJobLogs collection'
+      details: 'Failed to recreate logs collection'
     }, { status: 500 });
   }
 }

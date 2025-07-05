@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { collection, getDocs, doc, updateDoc, addDoc, deleteDoc, query, where, orderBy, limit } from 'firebase/firestore';
 import { db } from '@/lib/firebase/firebase';
+import { cronJobLogger } from '@/lib/cronJobLogger';
 
 interface CronJob {
   id: string;
@@ -369,12 +370,15 @@ async function executeCronJob(jobId: string) {
 
 async function logCronExecution(jobId: string, message: string, level: 'info' | 'warning' | 'error') {
   try {
-    const logsRef = collection(db, 'cronLogs');
-    await addDoc(logsRef, {
-      jobId,
-      message,
-      level,
-      timestamp: new Date().toISOString()
+    await cronJobLogger.logManualFetch({
+      adminId: 'superadmin',
+      adminName: 'SuperAdmin',
+      adminEmail: 'superadmin@system.com',
+      apiSource: 'Cron Management',
+      operation: `Cron Job ${jobId}`,
+      status: level === 'error' ? 'failure' : 'success',
+      message: message,
+      details: `Job ID: ${jobId}, Level: ${level}`
     });
   } catch (error) {
     console.error('Error logging cron execution:', error);

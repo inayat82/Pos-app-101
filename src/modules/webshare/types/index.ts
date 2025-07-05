@@ -17,8 +17,45 @@ export interface WebshareConfig {
   profile: WebshareProfile | null;
   subscription: WebshareSubscription | null;
   
-  // Cron & automation settings
+  // Cron & automation settings - Enhanced with multiple intervals
   cronSettings: {
+    // Proxy sync scheduling
+    proxySyncSchedule: {
+      enabled: boolean;
+      interval: 'hourly' | '3hours' | '6hours' | '24hours' | 'custom';
+      customInterval?: number; // minutes for custom interval
+      lastSync: string | null;
+      nextSync: string | null;
+    };
+    
+    // Account info sync scheduling
+    accountSyncSchedule: {
+      enabled: boolean;
+      interval: 'hourly' | '3hours' | '6hours' | '24hours' | 'custom';
+      customInterval?: number; // minutes for custom interval
+      lastSync: string | null;
+      nextSync: string | null;
+    };
+    
+    // Statistics update scheduling
+    statsUpdateSchedule: {
+      enabled: boolean;
+      interval: 'hourly' | '3hours' | '6hours' | '24hours' | 'custom';
+      customInterval?: number; // minutes for custom interval
+      lastUpdate: string | null;
+      nextUpdate: string | null;
+    };
+    
+    // Proxy health check scheduling
+    healthCheckSchedule: {
+      enabled: boolean;
+      interval: 'hourly' | '3hours' | '6hours' | '24hours' | 'custom';
+      customInterval?: number; // minutes for custom interval
+      lastCheck: string | null;
+      nextCheck: string | null;
+    };
+    
+    // Legacy fields for backward compatibility
     statsUpdateInterval: number; // minutes
     lastStatsUpdate: string | null;
     autoRefreshProxies: boolean;
@@ -217,3 +254,48 @@ export const DEFAULT_TAKEALOT_CONFIG: TakealotRequestConfig = {
     requestsPerHour: 1000,
   },
 };
+
+// Enhanced CRUD optimization types
+export interface ProxyCrudOperation {
+  operation: 'create' | 'update' | 'delete' | 'skip';
+  proxy: WebshareProxy;
+  reason: string;
+  changedFields?: string[];
+}
+
+export interface CrudOptimizationResult {
+  operations: ProxyCrudOperation[];
+  statistics: {
+    total: number;
+    created: number;
+    updated: number;
+    deleted: number;
+    skipped: number;
+    savedWrites: number;
+    costSaving: number; // estimated percentage
+  };
+  performance: {
+    comparisonTime: number;
+    totalTime: number;
+    averageTimePerProxy: number;
+  };
+}
+
+export interface CronScheduleConfig {
+  type: 'hourly' | '3hours' | '6hours' | '24hours' | 'custom';
+  customInterval?: number; // minutes
+  enabled: boolean;
+  lastExecution: string | null;
+  nextExecution: string | null;
+  executionCount: number;
+  lastError: string | null;
+}
+
+export interface AdvancedSyncOptions {
+  forceFullSync: boolean;
+  compareBeforeUpdate: boolean;
+  skipUnchangedProxies: boolean;
+  batchSize: number;
+  maxConcurrentOperations: number;
+  enablePerformanceMetrics: boolean;
+}

@@ -32,11 +32,11 @@ export async function GET(request: NextRequest) {
     const adminId = searchParams.get('adminId');
     const triggerType = searchParams.get('triggerType'); // cron, manual
 
-    // Build query
-    let query = db.collection('takealotSyncLogs')
-      .orderBy('timestamp', 'desc');
+    // Build query for centralized logs collection
+    let query = db.collection('logs')
+      .orderBy('createdAt', 'desc');
 
-    // Apply filters
+    // Apply filters using the unified log structure
     if (status) {
       query = query.where('status', '==', status);
     }
@@ -44,14 +44,16 @@ export async function GET(request: NextRequest) {
       query = query.where('adminId', '==', adminId);
     }
     if (triggerType === 'cron') {
-      query = query.where('cronLabel', '!=', null);
+      query = query.where('triggerType', '==', 'cron');
+    } else if (triggerType === 'manual') {
+      query = query.where('triggerType', '==', 'manual');
     }
 
     // Apply pagination
     query = query.limit(limit);
     if (offset > 0) {
-      const offsetQuery = await db.collection('takealotSyncLogs')
-        .orderBy('timestamp', 'desc')
+      const offsetQuery = await db.collection('logs')
+        .orderBy('createdAt', 'desc')
         .limit(offset)
         .get();
       
@@ -113,63 +115,60 @@ export async function GET(request: NextRequest) {
       await Promise.all(integrationPromises);
     }
 
-    // Transform logs to match API monitor format
+    // Transform logs from unified structure to API monitor format
     const logs = snapshot.docs.map(doc => {
       const data = doc.data();
       
-      // Determine status from various fields
-      let status: 'success' | 'failure' | 'in-progress' = 'success';
-      if (data.error || data.type === 'error' || data.type === 'fatal_error') {
-        status = 'failure';
-      } else if (data.type === 'chunk_processed' || data.type === 'start') {
-        status = 'in-progress';
-      }
-
-      // Determine API source
-      let apiSource: 'Takealot' | 'Webshare' | 'Unknown' = 'Takealot';
-      if (data.message && data.message.toLowerCase().includes('webshare')) {
+      // Determine API source from the unified log structure
+      let apiSource: 'Takealot' | 'Webshare' | 'System' | 'Unknown' = 'Unknown';
+      if (data.apiSource?.includes('Takealot') || data.cronJobName?.includes('takealot')) {
+        apiSource = 'Takealot';
+      } else if (data.apiSource?.includes('Webshare') || data.cronJobName?.includes('webshare')) {
         apiSource = 'Webshare';
+      } else if (data.cronJobType === 'system') {
+        apiSource = 'System';
       }
 
-      // Calculate stats
+      // Calculate stats from unified log fields
       const stats = {
-        totalPages: data.totalPages || data.pagesProcessed || 0,
-        apiReads: data.apiReads || data.totalItemsProcessed || data.itemsProcessed || 0,
-        dbWrites: data.dbWrites || data.totalNewRecords || data.newRecordsAdded || 0,
-        durationMs: data.processingTimeMs || data.duration || 0,
+        totalPages: data.totalPages || 0,
+        apiReads: data.totalReads || data.itemsProcessed || 0,
+        dbWrites: data.totalWrites || 0,
+        durationMs: data.duration || 0,
       };
 
       return {
         id: doc.id,
-        timestamp: data.timestamp?.toDate?.()?.getTime() || Date.now(),
+        timestamp: data.createdAt?.toDate?.()?.getTime() || data.startTime?.toDate?.()?.getTime() || Date.now(),
         adminId: data.adminId || 'unknown',
-        adminName: adminNames.get(data.adminId) || 'Unknown Admin',
-        takealotAccountId: data.integrationId || 'unknown',
-        takealotAccountName: integrationNames.get(data.integrationId) || 'Unknown Account',
+        adminName: data.adminName || adminNames.get(data.adminId) || 'Unknown Admin',
+        takealotAccountId: data.integrationId || data.accountId || 'unknown',
+        takealotAccountName: data.accountName || integrationNames.get(data.integrationId) || 'Unknown Account',
         apiSource,
-        triggerType: data.cronLabel ? 'cron' : 'manual',
-        status,
+        triggerType: data.triggerType || (data.cronJobType === 'scheduled' ? 'cron' : 'manual'),
+        status: data.status || 'success',
         stats,
-        error: data.error ? {
-          message: data.error,
-          code: data.errorCode || 'UNKNOWN_ERROR',
-          details: data.errorDetails
+        error: data.errorDetails ? {
+          message: data.errorDetails,
+          code: 'LOG_ERROR',
+          details: data.message
         } : undefined,
         metadata: {
           cronLabel: data.cronLabel,
           dataType: data.dataType,
           jobId: data.jobId,
-          type: data.type,
-          message: data.message,
-          duplicatesFound: data.duplicatesFound,
-          duplicatesRemoved: data.duplicatesRemoved,
+          type: data.cronJobType || 'unknown',
+          message: data.message || '',
+          cronJobName: data.cronJobName,
+          executionId: data.executionId,
+          details: data.details,
           originalData: data
         }
       };
     });
 
     // Get total count for pagination
-    const totalSnapshot = await db.collection('takealotSyncLogs').get();
+    const totalSnapshot = await db.collection('logs').get();
     const total = totalSnapshot.size;
 
     return NextResponse.json({

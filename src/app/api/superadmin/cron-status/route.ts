@@ -97,9 +97,7 @@ export async function GET(request: NextRequest) {
         lastCheck: new Date().toISOString(),
         lastSuccessfulWrite: new Date().toISOString(),
         collections: {
-          'sync_jobs': 'accessible',
-          'takealotSyncLogs': 'accessible',
-          'cronJobLogs': 'accessible',
+          'logs': 'accessible',
           'users': 'accessible',
           'takealotIntegrations': 'accessible'
         }

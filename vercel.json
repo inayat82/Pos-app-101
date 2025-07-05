@@ -16,20 +16,20 @@
     }
   },  "crons": [
     {
-      "path": "/api/cron/takealot-hourly-30day-sales",
+      "path": "/api/cron/takealot-hourly-100-sales",
       "schedule": "0 * * * *"
     },
     {
-      "path": "/api/cron/takealot-nightly-sales",
-      "schedule": "0 1 * * *"
+      "path": "/api/cron/takealot-nightly-30day-sales",
+      "schedule": "0 2 * * *"
     },
     {
       "path": "/api/cron/takealot-weekly-6month-sales",
-      "schedule": "0 2 * * 0"
+      "schedule": "0 3 * * 0"
     },
     {
       "path": "/api/cron/takealot-hourly-100-products",
-      "schedule": "0 */2 * * *"
+      "schedule": "0 * * * *"
     },
     {
       "path": "/api/cron/takealot-6hourly-all-products",
@@ -42,6 +42,10 @@
     {
       "path": "/api/cron/calculate-product-metrics",
       "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/cron/webshare-auto-sync",
+      "schedule": "0 * * * *"
     },
     {
       "path": "/api/cron/cleanup-old-logs",

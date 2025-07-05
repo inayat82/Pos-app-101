@@ -41,6 +41,7 @@ import {
   ApiResponse,
   WebshareDashboardData 
 } from '../types';
+import CronSettings from './CronSettings';
 
 // Modern Webshare Dashboard with 3 Tabs
 export default function WebshareModernDashboard() {
@@ -67,10 +68,43 @@ export default function WebshareModernDashboard() {
     timeout: 30000
   });
 
+  // Cron settings state
+  const [cronSettings, setCronSettings] = useState({
+    proxySyncSchedule: {
+      enabled: false,
+      interval: 'hourly' as const,
+      customInterval: 60,
+      lastSync: null,
+      nextSync: null
+    },
+    accountSyncSchedule: {
+      enabled: false,
+      interval: '3hours' as const,
+      customInterval: 180,
+      lastSync: null,
+      nextSync: null
+    },
+    statsUpdateSchedule: {
+      enabled: false,
+      interval: '6hours' as const,
+      customInterval: 360,
+      lastUpdate: null,
+      nextUpdate: null
+    },
+    healthCheckSchedule: {
+      enabled: false,
+      interval: '24hours' as const,
+      customInterval: 1440,
+      lastCheck: null,
+      nextCheck: null
+    }
+  });
+
   useEffect(() => {
+    // Load initial data on mount only
     loadData();
-    const interval = setInterval(loadData, 60000); // Refresh every minute
-    return () => clearInterval(interval);
+    // Note: Removed automatic interval refresh to prevent background proxy fetching
+    // Proxy data should only be fetched manually via user interaction
   }, []);
 
   useEffect(() => {
@@ -85,20 +119,23 @@ export default function WebshareModernDashboard() {
       console.log('🔄 Starting dashboard data load...');
       const startTime = performance.now();
       
-      const [configResponse, proxiesResponse, statusResponse] = await Promise.all([
+      // Load config, status, cron settings, and dashboard data in parallel for instant loading
+      const [configResponse, statusResponse, cronResponse, dashboardResponse] = await Promise.all([
         fetch('/api/superadmin/webshare-unified?action=config'),
-        fetch('/api/superadmin/webshare-unified?action=proxies&limit=100'), // Start with smaller batch for faster loading
-        fetch('/api/superadmin/webshare-unified?action=status')
+        fetch('/api/superadmin/webshare-unified?action=status'),
+        fetch('/api/superadmin/webshare-unified?action=get-cron-settings'),
+        fetch('/api/superadmin/webshare-unified?action=dashboard')
       ]);
 
-      const [configData, proxiesData, statusData] = await Promise.all([
+      const [configData, statusData, cronData, dashboardData] = await Promise.all([
         configResponse.json(),
-        proxiesResponse.json(),
-        statusResponse.json()
+        statusResponse.json(),
+        cronResponse.json(),
+        dashboardResponse.json()
       ]);
 
       const endTime = performance.now();
-      console.log(`✅ Dashboard data loaded in ${(endTime - startTime).toFixed(2)}ms`);
+      console.log(`✅ Dashboard config loaded in ${(endTime - startTime).toFixed(2)}ms`);
 
       if (configData.success) {
         setConfig(configData.data);
@@ -111,18 +148,22 @@ export default function WebshareModernDashboard() {
         });
       }
 
-      if (proxiesData.success) {
-        setProxies(proxiesData.data.proxies || []);
-      }
-
       if (statusData.success) {
         setSystemStatus(statusData.data);
       }
 
-      // Load dashboard data if API is configured
-      if (configData.data?.apiKey && configData.data?.testStatus === 'connected') {
-        await loadDashboardData();
+      if (cronData.success && cronData.data) {
+        setCronSettings(cronData.data);
       }
+
+      // Load dashboard data immediately for instant account information display
+      if (dashboardData.success && dashboardData.data) {
+        setDashboardData(dashboardData.data);
+        console.log('✅ Dashboard data loaded instantly with account information');
+      }
+
+      // Note: Proxy data is now loaded only when user explicitly navigates to proxies tab
+      // This prevents automatic proxy fetching on page load
     } catch (error) {
       console.error('Error loading data:', error);
     } finally {
@@ -130,17 +171,35 @@ export default function WebshareModernDashboard() {
     }
   };
 
-  // Load dashboard data from Webshare API
-  const loadDashboardData = async () => {
+  // Refresh only configuration and status without fetching proxies
+  const refreshConfigAndStatus = async () => {
     try {
-      const response = await fetch('/api/superadmin/webshare-unified?action=dashboard');
-      const data: ApiResponse<WebshareDashboardData> = await response.json();
-      
-      if (data.success && data.data) {
-        setDashboardData(data.data);
+      const [configResponse, statusResponse] = await Promise.all([
+        fetch('/api/superadmin/webshare-unified?action=config'),
+        fetch('/api/superadmin/webshare-unified?action=status')
+      ]);
+
+      const [configData, statusData] = await Promise.all([
+        configResponse.json(),
+        statusResponse.json()
+      ]);
+
+      if (configData.success) {
+        setConfig(configData.data);
+        setFormData({
+          apiKey: configData.data.apiKey || '',
+          isEnabled: configData.data.isEnabled || false,
+          syncInterval: configData.data.syncInterval || 60,
+          maxRetries: configData.data.maxRetries || 3,
+          timeout: configData.data.timeout || 30000
+        });
+      }
+
+      if (statusData.success) {
+        setSystemStatus(statusData.data);
       }
     } catch (error) {
-      console.error('Error loading dashboard data:', error);
+      console.error('Error refreshing config and status:', error);
     }
   };
 
@@ -208,18 +267,43 @@ export default function WebshareModernDashboard() {
     }
   };
 
-  // Load more proxies when needed (for pagination)
-  const loadMoreProxies = async (limit: number = 1000) => {
+  // Load proxies only when explicitly requested (optimized for database loading)
+  const loadProxiesOnDemand = async (limit: number = 1000, showLoading: boolean = true, forceRefresh: boolean = false) => {
     try {
-      const response = await fetch(`/api/superadmin/webshare-unified?action=proxies&limit=${limit}`);
+      if (showLoading) {
+        console.log('🔄 Loading proxies from database...');
+      }
+      
+      const action = forceRefresh ? 'proxies' : 'proxies';
+      const cacheParam = forceRefresh ? '&cache=false' : '';
+      const response = await fetch(`/api/superadmin/webshare-unified?action=${action}&limit=${limit}${cacheParam}`);
       const data = await response.json();
       
       if (data.success) {
         setProxies(data.data.proxies || []);
+        console.log(`✅ Loaded ${data.data.proxies?.length || 0} proxies from database (total: ${data.data.total || 0})`);
+        
+        // Show user feedback about data source
+        if (showLoading) {
+          const sourceMsg = forceRefresh ? '(fresh from database)' : '(cached data)';
+          setAlert({ 
+            type: 'success', 
+            message: `Loaded ${data.data.proxies?.length || 0} proxies ${sourceMsg}` 
+          });
+        }
       }
     } catch (error) {
-      console.error('Error loading more proxies:', error);
+      console.error('Error loading proxies from database:', error);
+      setAlert({ 
+        type: 'error', 
+        message: 'Failed to load proxy data from database' 
+      });
     }
+  };
+
+  // Load more proxies when needed (for pagination)
+  const loadMoreProxies = async (limit: number = 1000) => {
+    return loadProxiesOnDemand(limit, false); // Don't show loading message for pagination
   };
 
   const handleSyncProxies = async () => {
@@ -233,8 +317,12 @@ export default function WebshareModernDashboard() {
       const data: ApiResponse = await response.json();
       
       if (data.success) {
-        setAlert({ type: 'success', message: data.message || 'Proxies synced successfully' });
-        await loadData();
+        setAlert({ type: 'success', message: data.message || 'Proxies synced successfully from Webshare API' });
+        // Refresh proxies if user is on proxies tab, otherwise just update status
+        if (activeTab === 'proxies') {
+          await loadProxiesOnDemand(1000, false); // Don't show loading message for refresh
+        }
+        await refreshConfigAndStatus();
       } else {
         setAlert({ type: 'error', message: data.message || 'Failed to sync proxies' });
       }
@@ -257,8 +345,9 @@ export default function WebshareModernDashboard() {
       const data: ApiResponse = await response.json();
       
       if (data.success) {
-        setAlert({ type: 'success', message: data.message || 'Account info synced successfully' });
-        await loadData();
+        setAlert({ type: 'success', message: data.message || 'Account info synced successfully from Webshare API' });
+        await refreshConfigAndStatus();
+        await loadDashboardData(); // Account info affects dashboard
       } else {
         setAlert({ type: 'error', message: data.message || 'Failed to sync account info' });
       }
@@ -282,7 +371,12 @@ export default function WebshareModernDashboard() {
       
       if (data.success) {
         setAlert({ type: 'success', message: data.message || 'All data synced successfully' });
-        await loadData();
+        // Refresh all data after sync all operation
+        if (activeTab === 'proxies') {
+          await loadProxiesOnDemand(10000);
+        }
+        await refreshConfigAndStatus();
+        await loadDashboardData();
       } else {
         setAlert({ type: 'error', message: data.message || 'Failed to sync all data' });
       }
@@ -311,6 +405,147 @@ export default function WebshareModernDashboard() {
       setAlert({ type: 'error', message: 'Auto-sync failed' });
     } finally {
       setSyncing(false);
+    }
+  };
+
+  // Load dashboard data from Webshare API
+  const loadDashboardData = async () => {
+    try {
+      console.log('📊 Loading dashboard data from database...');
+      const startTime = performance.now();
+      
+      const response = await fetch('/api/superadmin/webshare-unified?action=dashboard');
+      const data: ApiResponse<WebshareDashboardData> = await response.json();
+      
+      if (data.success && data.data) {
+        setDashboardData(data.data);
+        const endTime = performance.now();
+        console.log(`✅ Dashboard data loaded from database in ${(endTime - startTime).toFixed(2)}ms`);
+      }
+    } catch (error) {
+      console.error('Error loading dashboard data:', error);
+    }
+  };
+
+  // Optimized sync handlers
+  const handleSyncProxiesOptimized = async () => {
+    try {
+      setSyncing(true);
+      
+      const response = await fetch('/api/superadmin/webshare-unified?action=sync-proxies-optimized', {
+        method: 'POST'
+      });
+
+      const data: ApiResponse = await response.json();
+      
+      if (data.success) {
+        setAlert({ 
+          type: 'success', 
+          message: `Optimized sync completed! ${data.data?.crudResult?.statistics ? `${data.data.crudResult.statistics.created} added, ${data.data.crudResult.statistics.updated} updated, ${data.data.crudResult.statistics.deleted} removed, ${data.data.crudResult.statistics.skipped} skipped (${data.data.crudResult.statistics.costSaving.toFixed(1)}% cost savings)` : 'Proxies synchronized with optimization'}` 
+        });
+        
+        // Force refresh data to show accurate counts
+        if (activeTab === 'proxies') {
+          await loadProxiesOnDemand(1000, false, true); // Force fresh data
+        }
+        await refreshConfigAndStatus();
+        await loadDashboardData(); // Refresh dashboard with accurate proxy count
+      } else {
+        setAlert({ type: 'error', message: data.message || 'Failed to sync proxies with optimization' });
+      }
+    } catch (error) {
+      console.error('Error syncing proxies optimized:', error);
+      setAlert({ type: 'error', message: 'Failed to sync proxies with optimization' });
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  // New force cleanup handler to remove ALL stale proxies
+  const handleForceCleanupSync = async () => {
+    try {
+      setSyncing(true);
+      
+      const response = await fetch('/api/superadmin/webshare-unified?action=sync-proxies-force-cleanup', {
+        method: 'POST'
+      });
+
+      const data: ApiResponse = await response.json();
+      
+      if (data.success) {
+        const crudResult = data.data?.crudResult;
+        if (crudResult) {
+          const { statistics } = crudResult;
+          setAlert({ 
+            type: 'success', 
+            message: `🧹 Force cleanup completed: ${statistics.created} added, ${statistics.updated} updated, ${statistics.deleted} stale proxies removed. Database is now accurate!` 
+          });
+        } else {
+          setAlert({ type: 'success', message: data.message || 'Force cleanup completed - all stale proxies removed' });
+        }
+        
+        // Force refresh all data after cleanup
+        await Promise.all([
+          loadProxiesOnDemand(1000, false, true), // Force fresh proxy data
+          refreshConfigAndStatus(),
+          loadDashboardData() // Refresh dashboard with accurate counts
+        ]);
+      } else {
+        setAlert({ type: 'error', message: data.message || 'Failed to perform force cleanup' });
+      }
+    } catch (error) {
+      console.error('Error performing force cleanup:', error);
+      setAlert({ type: 'error', message: 'Failed to perform force cleanup' });
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  // Cron settings handlers
+  const handleSaveCronSettings = async (settings: typeof cronSettings) => {
+    try {
+      const response = await fetch('/api/superadmin/webshare-unified?action=save-cron-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cronSettings: settings })
+      });
+
+      const data: ApiResponse = await response.json();
+      
+      if (data.success) {
+        setCronSettings(settings);
+        setAlert({ type: 'success', message: 'Cron settings saved successfully!' });
+      } else {
+        throw new Error(data.message || 'Failed to save cron settings');
+      }
+    } catch (error) {
+      console.error('Error saving cron settings:', error);
+      throw error;
+    }
+  };
+
+  const handleTestCronOperation = async (operationType: string) => {
+    try {
+      const response = await fetch(`/api/superadmin/webshare-unified?action=test-cron&type=${operationType}`, {
+        method: 'POST'
+      });
+
+      const data: ApiResponse = await response.json();
+      
+      if (data.success) {
+        setAlert({ type: 'success', message: `${operationType} operation tested successfully!` });
+        // Refresh relevant data after test
+        if (operationType === 'proxies' || operationType === 'all') {
+          await loadProxiesOnDemand(1000, false);
+        }
+        await refreshConfigAndStatus();
+        await loadDashboardData();
+      } else {
+        throw new Error(data.message || `Failed to test ${operationType} operation`);
+      }
+    } catch (error) {
+      console.error(`Error testing ${operationType} operation:`, error);
+      throw error;
     }
   };
 
@@ -375,9 +610,10 @@ export default function WebshareModernDashboard() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <Tabs value={activeTab} onValueChange={(value: any) => {
           setActiveTab(value);
-          // Load all proxies when switching to proxies tab
-          if (value === 'proxies' && proxies.length < 200) {
-            loadMoreProxies(10000);
+          // Load proxies only when user explicitly navigates to proxies tab
+          if (value === 'proxies' && proxies.length === 0) {
+            console.log('🎯 User navigated to proxies tab - loading cached proxy data');
+            loadProxiesOnDemand(1000, true); // Show loading feedback
           }
         }} className="space-y-6">
           {/* Tab Navigation */}
@@ -413,6 +649,8 @@ export default function WebshareModernDashboard() {
               proxies={proxies}
               loading={loading}
               onSync={handleSyncProxies}
+              onSyncOptimized={handleSyncProxiesOptimized}
+              onForceCleanup={handleForceCleanupSync}
               onSyncAccount={handleSyncAccount}
               onSyncAll={handleSyncAll}
               syncing={syncing}
@@ -432,6 +670,9 @@ export default function WebshareModernDashboard() {
               onTest={handleTestApi}
               saving={saving}
               testing={testing}
+              cronSettings={cronSettings}
+              onSaveCronSettings={handleSaveCronSettings}
+              onTestCronOperation={handleTestCronOperation}
             />
           </TabsContent>
         </Tabs>
@@ -646,6 +887,8 @@ function ProxyManagementTab({
   proxies, 
   loading, 
   onSync, 
+  onSyncOptimized,
+  onForceCleanup,
   syncing,
   onSyncAccount,
   onSyncAll,
@@ -656,6 +899,8 @@ function ProxyManagementTab({
   proxies: WebshareProxy[];
   loading: boolean;
   onSync: () => void;
+  onSyncOptimized?: () => void;
+  onForceCleanup?: () => void;
   syncing: boolean;
   onSyncAccount?: () => void;
   onSyncAll?: () => void;
@@ -753,8 +998,20 @@ function ProxyManagementTab({
                 ) : (
                   <RefreshCw className="h-4 w-4 mr-2" />
                 )}
-                Sync Proxies
+                Basic Sync
               </Button>
+              {onSyncOptimized && (
+                <Button onClick={onSyncOptimized} disabled={syncing} variant="default" size="sm">
+                  <TrendingUp className="h-4 w-4 mr-2" />
+                  Smart Sync
+                </Button>
+              )}
+              {onForceCleanup && (
+                <Button onClick={onForceCleanup} disabled={syncing} variant="destructive" size="sm">
+                  <AlertCircle className="h-4 w-4 mr-2" />
+                  Force Cleanup
+                </Button>
+              )}
               {onSyncAccount && (
                 <Button onClick={onSyncAccount} disabled={syncing} variant="outline" size="sm">
                   <User className="h-4 w-4 mr-2" />
@@ -910,7 +1167,10 @@ function SettingsConfigurationTab({
   onSave, 
   onTest, 
   saving, 
-  testing 
+  testing,
+  cronSettings,
+  onSaveCronSettings,
+  onTestCronOperation
 }: {
   config: WebshareConfig | null;
   formData: any;
@@ -919,6 +1179,9 @@ function SettingsConfigurationTab({
   onTest: () => void;
   saving: boolean;
   testing: boolean;
+  cronSettings: any;
+  onSaveCronSettings: (settings: any) => Promise<void>;
+  onTestCronOperation: (operationType: string) => Promise<void>;
 }) {
   const [showApiKey, setShowApiKey] = useState(false);
 
@@ -1010,58 +1273,12 @@ function SettingsConfigurationTab({
         </CardContent>
       </Card>
 
-      {/* Cron & Automation Settings */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center space-x-2">
-            <Clock className="h-5 w-5" />
-            <span>Cron & Automation Settings</span>
-          </CardTitle>
-          <CardDescription>
-            Configure automatic sync intervals and scheduling
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="syncInterval">Sync Interval (minutes)</Label>
-              <Input
-                id="syncInterval"
-                type="number"
-                value={formData.syncInterval}
-                onChange={(e) => onFormDataChange({ ...formData, syncInterval: parseInt(e.target.value) })}
-              />
-              <p className="text-sm text-muted-foreground">How often to sync proxy data automatically</p>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="maxRetries">Max Retries</Label>
-              <Input
-                id="maxRetries"
-                type="number"
-                value={formData.maxRetries}
-                onChange={(e) => onFormDataChange({ ...formData, maxRetries: parseInt(e.target.value) })}
-              />
-              <p className="text-sm text-muted-foreground">Maximum retry attempts for failed requests</p>
-            </div>
-          </div>
-
-          <div className="space-y-3">
-            <div className="flex items-center space-x-2">
-              <input
-                type="checkbox"
-                id="autoSync"
-                checked={config?.autoSyncEnabled || false}
-                onChange={() => {}}
-                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-              />
-              <Label htmlFor="autoSync">Enable Automatic Hourly Sync</Label>
-            </div>
-            <p className="text-sm text-muted-foreground">
-              Last auto-sync: {config?.lastAutoSyncAt ? new Date(config.lastAutoSyncAt).toLocaleString() : 'Never'}
-            </p>
-          </div>
-        </CardContent>
-      </Card>
+      {/* Advanced Cron & Automation Settings */}
+      <CronSettings 
+        cronSettings={cronSettings}
+        onSave={onSaveCronSettings}
+        onTest={onTestCronOperation}
+      />
 
       {/* System Status */}
       <Card>

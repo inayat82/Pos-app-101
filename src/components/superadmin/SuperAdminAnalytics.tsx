@@ -134,26 +134,15 @@ const SuperAdminAnalytics: React.FC = () => {
       // Calculate user growth (simplified - you'd want to group by date)
       const userGrowth: GrowthData[] = [];
 
-      // Webshare proxy stats - fetch from API instead of direct service
+      // Webshare proxy stats - Use cached data only, no automatic fetching
       let webshareProxyStats = {
         totalProxies: 0,
         lastRefresh: null as Date | null,
         isConnected: false,
       };
       
-      try {
-        const response = await fetch('/api/superadmin/webshare-unified');
-        if (response.ok) {
-          const systemStatus = await response.json();
-          webshareProxyStats = {
-            totalProxies: systemStatus.totalProxies || 0,
-            lastRefresh: systemStatus.lastSync ? new Date(systemStatus.lastSync) : null,
-            isConnected: systemStatus.isConfigured && systemStatus.isEnabled,
-          };
-        }
-      } catch (error) {
-        console.error('Failed to fetch webshare status:', error);
-      }
+      // Note: Webshare proxy data should only be fetched manually from the Webshare page
+      // This prevents automatic background fetching on dashboard load
 
       setAnalytics({
         totalUsers,

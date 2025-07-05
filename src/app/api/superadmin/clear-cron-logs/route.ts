@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
     if (type === 'all') {
       // Clear all logs
       console.log('[ClearCronLogs] Clearing ALL cron job logs...');
-      const allLogsSnapshot = await db.collection('cronJobLogs').get();
+      const allLogsSnapshot = await db.collection('logs').get();
       
       const batch = db.batch();
       let deleteCount = 0;
@@ -57,7 +57,7 @@ export async function POST(request: NextRequest) {
     } else if (type === 'admin' && adminId) {
       // Clear logs for specific admin
       console.log(`[ClearCronLogs] Clearing logs for admin: ${adminId}`);
-      const adminLogsSnapshot = await db.collection('cronJobLogs')
+      const adminLogsSnapshot = await db.collection('logs')
         .where('adminId', '==', adminId)
         .get();
       
@@ -88,7 +88,7 @@ export async function POST(request: NextRequest) {
       
       console.log(`[ClearCronLogs] Clearing logs older than: ${sevenDaysAgo.toISOString()}`);
       
-      const oldLogsSnapshot = await db.collection('cronJobLogs')
+      const oldLogsSnapshot = await db.collection('logs')
         .where('createdAt', '<', admin.firestore.Timestamp.fromDate(sevenDaysAgo))
         .get();
       
@@ -131,13 +131,13 @@ export async function POST(request: NextRequest) {
 export async function GET(request: NextRequest) {
   try {
     // Get log statistics
-    const totalLogsSnapshot = await db.collection('cronJobLogs').get();
+    const totalLogsSnapshot = await db.collection('logs').get();
     const totalLogs = totalLogsSnapshot.size;
     
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
     
-    const oldLogsSnapshot = await db.collection('cronJobLogs')
+    const oldLogsSnapshot = await db.collection('logs')
       .where('createdAt', '<', admin.firestore.Timestamp.fromDate(sevenDaysAgo))
       .get();
     const oldLogs = oldLogsSnapshot.size;

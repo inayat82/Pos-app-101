@@ -117,7 +117,7 @@ export class CronJobLogger {
         }).filter(([_, value]) => value !== undefined)
       );
 
-      await db.collection('cronJobLogs').add(cleanLogEntry);
+      await db.collection('logs').add(cleanLogEntry);
 
       console.log(`[CronLogger] Started execution: ${executionId} for ${params.cronJobName}`);
       return executionId;
@@ -146,7 +146,7 @@ export class CronJobLogger {
   ): Promise<void> {
     try {
       // Remove orderBy to avoid index requirement - executionId should be unique anyway
-      const query = await db.collection('cronJobLogs')
+      const query = await db.collection('logs')
         .where('executionId', '==', executionId)
         .limit(1)
         .get();
@@ -197,7 +197,7 @@ export class CronJobLogger {
     
     try {
       // Remove orderBy to avoid index requirement - executionId should be unique anyway
-      const query = await db.collection('cronJobLogs')
+      const query = await db.collection('logs')
         .where('executionId', '==', executionId)
         .limit(1)
         .get();
@@ -319,7 +319,7 @@ export class CronJobLogger {
         }).filter(([key, value]) => value !== undefined)
       );
 
-      await db.collection('cronJobLogs').add(cleanLogEntry);
+      await db.collection('logs').add(cleanLogEntry);
 
       console.log(`[CronLogger] Logged manual operation: ${executionId} for ${params.operation}`);
       return executionId;
@@ -428,7 +428,7 @@ export class CronJobLogger {
     } = {}
   ): Promise<{ logs: CronJobLog[]; total: number; hasMore: boolean }> {
     try {
-      let query = db.collection('cronJobLogs')
+      let query = db.collection('logs')
         .where('adminId', '==', adminId)
         .orderBy('createdAt', 'desc');
 
@@ -474,7 +474,7 @@ export class CronJobLogger {
       });
 
       // Get total count (this is approximate for performance)
-      const countQuery = await db.collection('cronJobLogs')
+      const countQuery = await db.collection('logs')
         .where('adminId', '==', adminId)
         .get();
       const total = countQuery.size;
@@ -502,7 +502,7 @@ export class CronJobLogger {
     } = {}
   ): Promise<{ logs: CronJobLog[]; total: number; hasMore: boolean }> {
     try {
-      let query = db.collection('cronJobLogs')
+      let query = db.collection('logs')
         .orderBy('createdAt', 'desc');
 
       // Apply filters
@@ -553,7 +553,7 @@ export class CronJobLogger {
       });
 
       // Get total count (this is approximate for performance)
-      const countSnapshot = await db.collection('cronJobLogs').get();
+      const countSnapshot = await db.collection('logs').get();
       const total = countSnapshot.size;
 
       return { logs, total, hasMore };
