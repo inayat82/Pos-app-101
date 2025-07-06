@@ -1536,7 +1536,9 @@ class WebshareService {
   async getCronSettings(): Promise<any> {
     try {
       const config = await this.getConfig();
-      return config.cronSettings || {
+      
+      // Default structure with all required properties
+      const defaultSettings = {
         proxySyncSchedule: {
           enabled: false,
           interval: 'hourly',
@@ -1566,6 +1568,33 @@ class WebshareService {
           nextCheck: null
         }
       };
+
+      // If no cron settings exist, return defaults
+      if (!config.cronSettings) {
+        return defaultSettings;
+      }
+
+      // Deep merge stored settings with defaults to ensure all properties exist
+      const mergedSettings = {
+        proxySyncSchedule: { 
+          ...defaultSettings.proxySyncSchedule, 
+          ...(config.cronSettings.proxySyncSchedule || {})
+        },
+        accountSyncSchedule: { 
+          ...defaultSettings.accountSyncSchedule, 
+          ...(config.cronSettings.accountSyncSchedule || {})
+        },
+        statsUpdateSchedule: { 
+          ...defaultSettings.statsUpdateSchedule, 
+          ...(config.cronSettings.statsUpdateSchedule || {})
+        },
+        healthCheckSchedule: { 
+          ...defaultSettings.healthCheckSchedule, 
+          ...(config.cronSettings.healthCheckSchedule || {})
+        }
+      };
+
+      return mergedSettings;
     } catch (error) {
       console.error('❌ Error getting cron settings:', error);
       throw error;

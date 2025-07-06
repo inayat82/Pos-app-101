@@ -153,7 +153,47 @@ export default function WebshareModernDashboard() {
       }
 
       if (cronData.success && cronData.data) {
-        setCronSettings(cronData.data);
+        // Merge with default structure to ensure all required properties exist
+        const defaultCronSettings = {
+          proxySyncSchedule: {
+            enabled: false,
+            interval: 'hourly' as const,
+            customInterval: 60,
+            lastSync: null,
+            nextSync: null
+          },
+          accountSyncSchedule: {
+            enabled: false,
+            interval: '3hours' as const,
+            customInterval: 180,
+            lastSync: null,
+            nextSync: null
+          },
+          statsUpdateSchedule: {
+            enabled: false,
+            interval: '6hours' as const,
+            customInterval: 360,
+            lastUpdate: null,
+            nextUpdate: null
+          },
+          healthCheckSchedule: {
+            enabled: false,
+            interval: '24hours' as const,
+            customInterval: 1440,
+            lastCheck: null,
+            nextCheck: null
+          }
+        };
+
+        // Deep merge API data with defaults to ensure all properties exist
+        const mergedCronSettings = {
+          proxySyncSchedule: { ...defaultCronSettings.proxySyncSchedule, ...cronData.data.proxySyncSchedule },
+          accountSyncSchedule: { ...defaultCronSettings.accountSyncSchedule, ...cronData.data.accountSyncSchedule },
+          statsUpdateSchedule: { ...defaultCronSettings.statsUpdateSchedule, ...cronData.data.statsUpdateSchedule },
+          healthCheckSchedule: { ...defaultCronSettings.healthCheckSchedule, ...cronData.data.healthCheckSchedule }
+        };
+
+        setCronSettings(mergedCronSettings);
       }
 
       // Load dashboard data immediately for instant account information display
@@ -504,10 +544,13 @@ export default function WebshareModernDashboard() {
   // Cron settings handlers
   const handleSaveCronSettings = async (settings: typeof cronSettings) => {
     try {
-      const response = await fetch('/api/superadmin/webshare-unified?action=save-cron-settings', {
-        method: 'POST',
+      const response = await fetch('/api/superadmin/webshare-unified', {
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cronSettings: settings })
+        body: JSON.stringify({ 
+          action: 'save-cron-settings',
+          cronSettings: settings 
+        })
       });
 
       const data: ApiResponse = await response.json();
@@ -516,10 +559,14 @@ export default function WebshareModernDashboard() {
         setCronSettings(settings);
         setAlert({ type: 'success', message: 'Cron settings saved successfully!' });
       } else {
-        throw new Error(data.message || 'Failed to save cron settings');
+        throw new Error(data.error || data.message || 'Failed to save cron settings');
       }
     } catch (error) {
       console.error('Error saving cron settings:', error);
+      setAlert({ 
+        type: 'error', 
+        message: `Failed to save cron settings: ${error instanceof Error ? error.message : 'Unknown error'}` 
+      });
       throw error;
     }
   };

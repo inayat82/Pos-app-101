@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { SalesSyncService } from '@/lib/salesSyncService';
 import { cronJobLogger } from '@/lib/cronJobLogger';
 import { dbAdmin as db } from '@/lib/firebase/firebaseAdmin';
+import { ChangeDetectionService } from '@/lib/changeDetectionService';
 
 export async function GET(request: NextRequest) {
   let logId: string | null = null;
@@ -63,11 +64,14 @@ export async function GET(request: NextRequest) {
           continue;
         }
 
-        console.log(`[Nightly30DaySalesCron] Processing 30-day sales for integration ${integrationId}`);
+        console.log(`[Nightly30DaySalesCron] Processing optimized 30-day sales for integration ${integrationId}`);
 
-        // Use the sales sync service with order_id-based logic
+        // Use the enhanced sales sync service with large dataset optimization
         const syncService = new SalesSyncService(integrationId);
-        const result = await syncService.syncSales(apiKey, 'Last 30 Days', 'cron', adminId);
+        const result = await syncService.syncLargeDatasetWithOptimization(apiKey, 'Last 30 Days', 'cron', adminId);
+        
+        // Get cost savings statistics
+        const costSavings = await ChangeDetectionService.getCostSavingsStats(integrationId, 1); // Last 24 hours
         
         results.push({
           integrationId,
@@ -76,7 +80,14 @@ export async function GET(request: NextRequest) {
           itemsProcessed: result.totalProcessed,
           newRecords: result.totalNew,
           updatedRecords: result.totalUpdated,
-          errors: result.totalErrors
+          errors: result.totalErrors,
+          skipped: result.totalSkipped,
+          // Add cost optimization metrics
+          optimizationStats: {
+            apiCallsSaved: costSavings.totalApiCallsSaved,
+            recordsSkipped: costSavings.totalRecordsNotProcessed,
+            estimatedSavings: costSavings.estimatedCostSavings
+          }
         });
         
         totalItemsProcessed += result.totalProcessed;

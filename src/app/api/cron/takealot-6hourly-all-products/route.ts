@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { dbAdmin as db } from '@/lib/firebase/firebaseAdmin';
 import { ProductSyncService } from '@/lib/productSyncService';
+import { ChangeDetectionService } from '@/lib/changeDetectionService';
 
 export async function GET(request: NextRequest) {
   try {
@@ -56,25 +57,36 @@ export async function GET(request: NextRequest) {
           continue;
         }
 
-        console.log(`Processing 6-hourly all products sync for integration: ${integrationId}`);
+        console.log(`Processing optimized 6-hourly all products sync for integration: ${integrationId}`);
         
-        // Initialize the Product Sync Service and perform sync
+        // Initialize the Product Sync Service and perform optimized sync
         const productSyncService = new ProductSyncService(integrationId);
-        const syncResult = await productSyncService.syncProducts(
+        const syncResult = await productSyncService.syncProductsWithOptimization(
           apiKey,
           'Fetch All Products (6h)',
           'cron',
           adminId
         );
 
+        // Get cost savings statistics
+        const costSavings = await ChangeDetectionService.getCostSavingsStats(integrationId, 1); // Last 24 hours
+
         results.push({
           integrationId,
           adminId,
           success: true,
-          result: syncResult
+          result: syncResult,
+          optimizationStats: {
+            apiCallsSaved: costSavings.totalApiCallsSaved,
+            recordsSkipped: costSavings.totalRecordsNotProcessed,
+            estimatedSavings: costSavings.estimatedCostSavings
+          }
         });
 
-        console.log(`Completed 6-hourly all products sync for ${integrationId}:`, syncResult);
+        console.log(`Completed optimized 6-hourly all products sync for ${integrationId}:`, {
+          ...syncResult,
+          costSavings
+        });
         
       } catch (error: any) {
         console.error(`Error processing integration ${integrationDoc.id}:`, error);

@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { SalesSyncService } from '@/lib/salesSyncService';
 import { cronJobLogger } from '@/lib/cronJobLogger';
 import { dbAdmin as db } from '@/lib/firebase/firebaseAdmin';
+import { ChangeDetectionService } from '@/lib/changeDetectionService';
 
 export async function GET(request: NextRequest) {
   let logId: string | null = null;
@@ -63,11 +64,14 @@ export async function GET(request: NextRequest) {
           continue;
         }
 
-        console.log(`[HourlySales100Cron] Processing Last 100 sales for integration ${integrationId}`);
+        console.log(`[HourlySales100Cron] Processing optimized Last 100 sales for integration ${integrationId}`);
 
-        // Use the sales sync service with order_id-based logic
+        // Use the enhanced sales sync service with cost optimization
         const syncService = new SalesSyncService(integrationId);
-        const result = await syncService.syncSales(apiKey, 'Last 100', 'cron', adminId);
+        const result = await syncService.syncSalesWithOptimization(apiKey, 'Last 100', 'cron', adminId);
+        
+        // Get cost savings statistics
+        const costSavings = await ChangeDetectionService.getCostSavingsStats(integrationId, 1); // Last 24 hours
         
         results.push({
           integrationId,
@@ -76,7 +80,14 @@ export async function GET(request: NextRequest) {
           itemsProcessed: result.totalProcessed,
           newRecords: result.totalNew,
           updatedRecords: result.totalUpdated,
-          errors: result.totalErrors
+          errors: result.totalErrors,
+          skipped: result.totalSkipped,
+          // Add cost optimization metrics
+          optimizationStats: {
+            apiCallsSaved: costSavings.totalApiCallsSaved,
+            recordsSkipped: costSavings.totalRecordsNotProcessed,
+            estimatedSavings: costSavings.estimatedCostSavings
+          }
         });
 
         totalItemsProcessed += result.totalProcessed;

@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { SalesSyncService } from '@/lib/salesSyncService';
 import { cronJobLogger } from '@/lib/cronJobLogger';
 import { dbAdmin as db } from '@/lib/firebase/firebaseAdmin';
+import { ChangeDetectionService } from '@/lib/changeDetectionService';
 
 export async function GET(request: NextRequest) {
   let logId: string | null = null;

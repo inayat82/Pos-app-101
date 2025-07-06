@@ -2,6 +2,7 @@
 import { dbAdmin as db } from '@/lib/firebase/firebaseAdmin';
 import { cronJobLogger } from '@/lib/cronJobLogger';
 import { takealotProxyService } from '@/modules/takealot/services';
+import { ChangeDetectionService } from '@/lib/changeDetectionService';
 
 interface ProductRecord {
   tsin_id?: string;
@@ -110,9 +111,6 @@ export class ProductSyncService {
     }
   }
 
-  /**
-   * Complete logging for the sync operation
-   */
   /**
    * Process product records with TSIN-based upsert logic
    * IMPORTANT: Preserves calculation fields and only updates API fields
@@ -572,6 +570,269 @@ export class ProductSyncService {
       console.error('Result:', result);
       
       // Don't throw here - we don't want logging errors to break the main operation
+    }
+  }
+
+  /**
+   * Enhanced sync with change detection and cost optimization
+   */
+  async syncProductsWithOptimization(
+    apiKey: string, 
+    strategy: string, 
+    triggerType: 'manual' | 'cron' = 'manual', 
+    adminId?: string
+  ): Promise<SyncResult> {
+    await this.startLogging(triggerType, strategy, adminId);
+
+    try {
+      // Step 1: Check if sync should be skipped
+      const changeDetection = await ChangeDetectionService.shouldSkipSync(
+        this.integrationId,
+        'products',
+        strategy
+      );
+
+      console.log(`[ProductSync] Change detection result for ${strategy}:`, changeDetection);
+
+      if (changeDetection.shouldSkipSync) {
+        const skipResult: SyncResult = {
+          totalProcessed: 0,
+          totalNew: 0,
+          totalUpdated: 0,
+          totalErrors: 0,
+          totalSkipped: changeDetection.estimatedChanges
+        };
+
+        await this.completeLogging(skipResult, strategy, triggerType, true);
+        console.log(`[ProductSync] Skipped sync for ${strategy}: ${changeDetection.reason}`);
+        
+        return skipResult;
+      }
+
+      // Step 2: Fetch first page for sample validation (if recommended)
+      let shouldProceedWithFullSync = true;
+      let maxPagesToProcess = -1; // -1 means no limit
+
+      if (changeDetection.recommendedAction === 'sample') {
+        const sampleResult = await this.performSampleValidation(apiKey, strategy, triggerType);
+        
+        if (sampleResult.recommendation === 'skip') {
+          const skipResult: SyncResult = {
+            totalProcessed: sampleResult.totalSampled,
+            totalNew: 0,
+            totalUpdated: 0,
+            totalErrors: 0,
+            totalSkipped: sampleResult.totalSampled
+          };
+          
+          await this.completeLogging(skipResult, strategy, triggerType, true);
+          console.log(`[ProductSync] Skipped after sample validation: no significant changes detected`);
+          return skipResult;
+        } else if (sampleResult.recommendation === 'limited') {
+          maxPagesToProcess = Math.max(1, Math.ceil(sampleResult.significantChanges / 20)); // Limit based on changes
+          console.log(`[ProductSync] Limited sync recommended: processing max ${maxPagesToProcess} pages`);
+        }
+      }
+
+      // Step 3: Proceed with optimized sync
+      const result = await this.syncProductsOptimized(apiKey, strategy, triggerType, adminId, maxPagesToProcess);
+      
+      // Step 4: Update change detection checkpoint
+      const dataChecksum = ChangeDetectionService.generateDataChecksum(result.processedRecords || []);
+      const hasChanges = result.totalNew > 0 || result.totalUpdated > 0;
+      
+      await ChangeDetectionService.updateSyncCheckpoint(
+        this.integrationId,
+        'products',
+        strategy,
+        result.totalProcessed,
+        dataChecksum,
+        hasChanges
+      );
+
+      await this.completeLogging(result, strategy, triggerType, true);
+      return result;
+
+    } catch (error: any) {
+      console.error(`[ProductSync] Error in optimized sync for ${strategy}:`, error);
+      
+      const errorResult: SyncResult = {
+        totalProcessed: 0,
+        totalNew: 0,
+        totalUpdated: 0,
+        totalErrors: 1,
+        totalSkipped: 0
+      };
+      
+      await this.completeLogging(errorResult, strategy, triggerType, false);
+      throw error;
+    }
+  }
+
+  /**
+   * Perform sample validation on first page of products
+   */
+  private async performSampleValidation(
+    apiKey: string, 
+    strategy: string, 
+    triggerType: 'manual' | 'cron'
+  ): Promise<any> {
+    try {
+      const endpoint = '/v2/offers';
+      const params: any = { page_number: 1, page_size: 100 };
+
+      // Configure parameters based on strategy
+      this.configureParamsForStrategy(params, strategy);
+
+      console.log(`[ProductSync] Performing sample validation for ${strategy}`);
+      
+      const response = await takealotProxyService.get(endpoint, apiKey, params, {
+        adminId: this.integrationId,
+        integrationId: this.integrationId,
+        requestType: triggerType,
+        dataType: 'products',
+        timeout: 30000
+      });
+
+      if (!response.success) {
+        throw new Error(`Sample validation failed: ${response.error}`);
+      }
+
+      const productRecords = response.data.results || [];
+      
+      return await ChangeDetectionService.validateSampleChanges(
+        this.integrationId,
+        'products',
+        strategy,
+        productRecords,
+        apiKey
+      );
+
+    } catch (error) {
+      console.error('[ProductSync] Error in sample validation:', error);
+      // On error, default to continue with full sync
+      return {
+        hasChanges: true,
+        changePercentage: 100,
+        significantChanges: 100,
+        totalSampled: 100,
+        recommendation: 'continue'
+      };
+    }
+  }
+
+  /**
+   * Optimized sync with pagination control
+   */
+  private async syncProductsOptimized(
+    apiKey: string,
+    strategy: string,
+    triggerType: 'manual' | 'cron',
+    adminId?: string,
+    maxPages: number = -1
+  ): Promise<SyncResult & { processedRecords?: any[] }> {
+    const endpoint = '/v2/offers';
+    const params: any = { page_size: 100 };
+
+    // Configure parameters based on strategy
+    this.configureParamsForStrategy(params, strategy);
+
+    const allProductRecords: ProductRecord[] = [];
+    let currentPage = 1;
+    let hasNextPage = true;
+    let pagesProcessed = 0;
+
+    try {
+      while (hasNextPage) {
+        params.page_number = currentPage;
+        
+        console.log(`[ProductSync] Fetching products page ${currentPage} (optimized mode)`);
+        
+        const response = await takealotProxyService.get(endpoint, apiKey, params, {
+          adminId: this.integrationId,
+          integrationId: this.integrationId,
+          requestType: triggerType || 'manual',
+          dataType: 'products',
+          timeout: 90000 // Longer timeout for product syncs
+        });
+
+        if (!response.success) {
+          throw new Error(`API request failed: ${response.error}`);
+        }
+
+        const data = response.data;
+        
+        // Capture proxy information for logging
+        if (response && response.proxyUsed && !this.proxyInfo.proxyUsed) {
+          this.proxyInfo.proxyUsed = response.proxyUsed;
+          this.proxyInfo.proxyProvider = 'Webshare';
+          this.proxyInfo.proxyCountry = 'ZA';
+        }
+        
+        const productRecords = data.results || [];
+        if (productRecords.length === 0) {
+          console.log(`[ProductSync] No product records found on page ${currentPage}, stopping pagination`);
+          break;
+        }
+        
+        allProductRecords.push(...productRecords);
+        pagesProcessed++;
+        
+        console.log(`[ProductSync] Fetched page ${currentPage}: ${productRecords.length} records`);
+        
+        // Check pagination limits
+        if (strategy === 'Fetch 100 Products' || (maxPages > 0 && pagesProcessed >= maxPages)) {
+          console.log(`[ProductSync] Reached pagination limit: strategy=${strategy}, maxPages=${maxPages}, processed=${pagesProcessed}`);
+          break;
+        }
+
+        // Check if there's a next page
+        hasNextPage = data.next != null;
+        if (!hasNextPage) {
+          console.log(`[ProductSync] No more pages available, completed at page ${currentPage}`);
+          break;
+        }
+        
+        currentPage++;
+        
+        // Add delay between requests (longer for large syncs)
+        const delay = strategy.includes('All Products') ? 1000 : 500;
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+
+      console.log(`[ProductSync] Completed data fetch: ${allProductRecords.length} total records from ${pagesProcessed} pages`);
+
+      // Process the fetched records
+      const result = await this.processProductRecords(allProductRecords);
+      
+      return {
+        ...result,
+        processedRecords: allProductRecords
+      };
+
+    } catch (error: any) {
+      console.error('[ProductSync] Error in optimized sync:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Configure API parameters based on strategy
+   */
+  private configureParamsForStrategy(params: any, strategy: string): void {
+    switch (strategy) {
+      case 'Fetch 100 Products':
+        params.page_size = 100;
+        // Will be limited by pagination logic
+        break;
+      case 'Fetch 200 Products':
+        params.page_size = 100; // Still use 100 per page, but fetch 2 pages
+        break;
+      case 'Fetch All Products (6h)':
+      case 'Fetch All Products (12h)':
+        params.page_size = 100;
+        // No additional limits - will fetch all
+        break;
     }
   }
 }

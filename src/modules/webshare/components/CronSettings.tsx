@@ -143,6 +143,12 @@ export default function CronSettings({ cronSettings, onSave, onTest }: CronSetti
   ) => {
     const schedule = settings[scheduleType] as any;
     
+    // Defensive programming: ensure schedule has required properties
+    if (!schedule || typeof schedule.enabled === 'undefined') {
+      console.warn(`⚠️ Schedule data missing for ${scheduleType}, using defaults`);
+      return null; // Skip rendering this card if data is incomplete
+    }
+    
     return (
       <Card key={scheduleType} className="border-2 hover:border-blue-200 transition-colors">
         <CardHeader className="pb-3">
