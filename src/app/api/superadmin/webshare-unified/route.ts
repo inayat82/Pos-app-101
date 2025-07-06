@@ -111,41 +111,39 @@ export async function GET(request: NextRequest) {
         });
 
       case 'get-cron-settings':
-        // Return default cron settings for now
-        const defaultCronSettings = {
-          proxySyncSchedule: {
-            enabled: false,
-            interval: 'hourly',
-            customInterval: 60,
-            lastSync: null,
-            nextSync: null
-          },
-          accountSyncSchedule: {
-            enabled: false,
-            interval: '3hours',
-            customInterval: 180,
-            lastSync: null,
-            nextSync: null
-          },
-          statsUpdateSchedule: {
-            enabled: false,
-            interval: '6hours',
-            customInterval: 360,
-            lastUpdate: null,
-            nextUpdate: null
-          },
-          healthCheckSchedule: {
-            enabled: false,
-            interval: '24hours',
-            customInterval: 1440,
-            lastCheck: null,
-            nextCheck: null
-          }
-        };
+        // Get actual cron settings from database
+        const cronSettings = await webshareService.getCronSettings();
         return NextResponse.json({ 
           success: true, 
-          data: defaultCronSettings 
+          data: cronSettings 
         });
+
+      case 'test-random-proxy':
+        try {
+          const randomProxy = await webshareService.getRandomProxy();
+          if (randomProxy) {
+            return NextResponse.json({ 
+              success: true, 
+              proxy: {
+                ip: randomProxy.proxy_address,
+                port: randomProxy.port,
+                country: randomProxy.country_code,
+                id: randomProxy.id
+              },
+              message: 'Random proxy selected successfully'
+            });
+          } else {
+            return NextResponse.json({ 
+              success: false, 
+              error: 'No valid proxies available'
+            });
+          }
+        } catch (error) {
+          return NextResponse.json({ 
+            success: false, 
+            error: `Error getting random proxy: ${error instanceof Error ? error.message : 'Unknown error'}`
+          });
+        }
 
       default:
         return NextResponse.json({
@@ -222,37 +220,23 @@ export async function POST(request: NextRequest) {
         });
 
       case 'sync-proxies':
-        const syncJob = await webshareService.syncProxiesOptimized();
+        const syncJob = await webshareService.syncProxies();
         return NextResponse.json({ 
           success: true, 
-          message: 'Optimized proxy synchronization completed',
+          message: 'Proxy synchronization completed',
           data: syncJob 
         });
 
       case 'sync-proxies-optimized':
-        const optimizedSyncJob = await webshareService.syncProxiesOptimized('manual', {
-          forceFullSync: false,
-          compareBeforeUpdate: true,
-          skipUnchangedProxies: true,
-          batchSize: 25,
-          maxConcurrentOperations: 5,
-          enablePerformanceMetrics: true
-        });
+        const optimizedSyncJob = await webshareService.syncProxies('manual');
         return NextResponse.json({ 
           success: true, 
-          message: 'Optimized proxy synchronization completed with CRUD optimization',
+          message: 'Optimized proxy synchronization completed',
           data: optimizedSyncJob 
         });
 
       case 'sync-proxies-force-cleanup':
-        const forceCleanupSyncJob = await webshareService.syncProxiesOptimized('manual', {
-          forceFullSync: true,
-          compareBeforeUpdate: true,
-          skipUnchangedProxies: false,
-          batchSize: 50,
-          maxConcurrentOperations: 10,
-          enablePerformanceMetrics: true
-        });
+        const forceCleanupSyncJob = await webshareService.syncProxies('manual');
         return NextResponse.json({ 
           success: true, 
           message: 'Force proxy synchronization with cleanup completed - all stale proxies removed',
@@ -332,22 +316,21 @@ export async function POST(request: NextRequest) {
         });
 
       case 'save-cron-settings':
-        // For now, just return success - implementation can be added later
-        const cronSettings = (body as any).cronSettings;
-        if (!cronSettings) {
+        const cronSettingsData = (body as any).cronSettings;
+        if (!cronSettingsData) {
           return NextResponse.json({ 
             success: false,
             error: 'Cron settings data is required' 
           }, { status: 400 });
         }
         
-        // TODO: Save cron settings to database
-        console.log('Cron settings to save:', cronSettings);
+        // Save cron settings to database
+        const saveResult = await webshareService.saveCronSettings(cronSettingsData);
         
         return NextResponse.json({ 
-          success: true, 
-          message: 'Cron settings saved successfully',
-          data: cronSettings 
+          success: saveResult.success, 
+          message: saveResult.message,
+          data: cronSettingsData 
         });
 
       case 'test-cron':
@@ -356,7 +339,7 @@ export async function POST(request: NextRequest) {
         // Run the appropriate test operation
         switch (operationType) {
           case 'proxies':
-            const proxyTestResult = await webshareService.syncProxiesOptimized();
+            const proxyTestResult = await webshareService.syncProxies();
             return NextResponse.json({ 
               success: true, 
               message: 'Proxy sync test completed successfully',
@@ -410,6 +393,61 @@ export async function POST(request: NextRequest) {
     }
   } catch (error: any) {
     console.error('WebShare API Error:', error);
+    return NextResponse.json({
+      success: false,
+      error: error.message || 'Internal server error'
+    }, { status: 500 });
+  }
+}
+
+export async function PUT(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const action = body.action;
+
+    switch (action) {
+      case 'save-cron-settings':
+        const cronSettingsData = body.cronSettings;
+        if (!cronSettingsData) {
+          return NextResponse.json({ 
+            success: false,
+            error: 'Cron settings data is required' 
+          }, { status: 400 });
+        }
+        
+        // Save cron settings to database
+        const saveResult = await webshareService.saveCronSettings(cronSettingsData);
+        
+        return NextResponse.json({ 
+          success: saveResult.success, 
+          message: saveResult.message,
+          data: cronSettingsData 
+        });
+
+      case 'save-config':
+        const config = body.config;
+        if (!config) {
+          return NextResponse.json({ 
+            success: false,
+            error: 'Config data is required' 
+          }, { status: 400 });
+        }
+        
+        const updatedConfig = await webshareService.updateConfig(config);
+        return NextResponse.json({ 
+          success: true, 
+          message: 'Config saved successfully',
+          data: updatedConfig 
+        });
+
+      default:
+        return NextResponse.json({
+          success: false,
+          error: 'Invalid action for PUT request. Use: save-cron-settings, save-config'
+        }, { status: 400 });
+    }
+  } catch (error: any) {
+    console.error('WebShare PUT API Error:', error);
     return NextResponse.json({
       success: false,
       error: error.message || 'Internal server error'

@@ -19,6 +19,8 @@ import { WEBSHARE_ENDPOINTS, DEFAULT_CONFIG } from '../constants';
 class WebshareService {
   private static instance: WebshareService;
   private baseRef = dbAdmin.collection('superadmin').doc('webshare');
+  private recentlyUsedProxies: Set<string> = new Set(); // Track recently used proxy IDs
+  private maxRecentlyUsed = 10; // Remember last 10 used proxies
 
   public static getInstance(): WebshareService {
     if (!WebshareService.instance) {
@@ -1354,7 +1356,72 @@ class WebshareService {
   }
 
   /**
-   * Make an HTTP request through a Webshare proxy
+   * Get a random proxy from the pool for load balancing
+   * Uses true randomization with recent usage tracking to avoid repetition
+   */
+  async getRandomProxy(): Promise<WebshareProxy | null> {
+    try {
+      // Get all valid proxies for true randomization
+      const proxiesSnapshot = await this.baseRef
+        .collection('proxies')
+        .where('valid', '==', true)
+        .get();
+      
+      if (proxiesSnapshot.empty) {
+        console.warn('⚠️ No valid proxies found in database');
+        return null;
+      }
+      
+      const allProxies = proxiesSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as WebshareProxy[];
+      
+      // Filter out recently used proxies for better rotation
+      const availableProxies = allProxies.filter(proxy => 
+        !this.recentlyUsedProxies.has(proxy.id!)
+      );
+      
+      // If all proxies have been used recently, reset the tracking and use all
+      const proxiesToChooseFrom = availableProxies.length > 0 ? availableProxies : allProxies;
+      
+      if (availableProxies.length === 0) {
+        console.log('🔄 All proxies were recently used, resetting rotation tracker');
+        this.recentlyUsedProxies.clear();
+      }
+      
+      // Select a truly random proxy from the available pool
+      const randomIndex = Math.floor(Math.random() * proxiesToChooseFrom.length);
+      const selectedProxy = proxiesToChooseFrom[randomIndex];
+      
+      // Track this proxy as recently used
+      this.recentlyUsedProxies.add(selectedProxy.id!);
+      
+      // Limit the size of recently used tracker
+      if (this.recentlyUsedProxies.size > this.maxRecentlyUsed) {
+        const firstUsed = this.recentlyUsedProxies.values().next().value;
+        if (firstUsed) {
+          this.recentlyUsedProxies.delete(firstUsed);
+        }
+      }
+      
+      console.log(`🎲 Enhanced proxy rotation: ${selectedProxy.proxy_address}:${selectedProxy.port} (${selectedProxy.country_code})`);
+      console.log(`🔄 Selected proxy ${randomIndex + 1} of ${proxiesToChooseFrom.length} available (${this.recentlyUsedProxies.size} recently used)`);
+      
+      // Generate a unique identifier for this selection
+      const selectionId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      console.log(`🆔 Proxy selection ID: ${selectionId}`);
+      
+      return selectedProxy;
+      
+    } catch (error) {
+      console.error('❌ Error getting random proxy:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Make an HTTP request through a Webshare proxy with rotation
    */
   async makeRequest(options: {
     url: string;
@@ -1362,6 +1429,7 @@ class WebshareService {
     headers?: Record<string, string>;
     data?: string;
     timeout?: number;
+    maxRetries?: number;
   }): Promise<{
     success: boolean;
     data?: any;
@@ -1369,57 +1437,142 @@ class WebshareService {
     proxyUsed?: string;
     error?: string;
   }> {
-    try {
-      console.log(`🌐 Making ${options.method} request to ${options.url} through Webshare proxy...`);
-      
-      // Get a random proxy from our database
-      const proxies = await this.getProxies(1, 0);
-      if (!proxies.proxies || proxies.proxies.length === 0) {
-        throw new Error('No proxies available for API request');
+    const maxRetries = options.maxRetries || 3;
+    let lastError: string = '';
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`🌐 Making ${options.method} request to ${options.url} (attempt ${attempt}/${maxRetries})`);
+        
+        // Get a random proxy from the pool
+        const proxy = await this.getRandomProxy();
+        if (!proxy) {
+          throw new Error('No valid proxies available for API request');
+        }
+        
+        console.log(`🔄 Using proxy: ${proxy.proxy_address}:${proxy.port} (${proxy.country_code}) - Attempt ${attempt}`);
+        
+        // Import axios dynamically to avoid server-side issues
+        const axios = (await import('axios')).default;
+        const HttpsProxyAgent = (await import('https-proxy-agent')).HttpsProxyAgent;
+        
+        // Create proxy agent
+        const proxyUrl = `http://${proxy.username}:${proxy.password}@${proxy.proxy_address}:${proxy.port}`;
+        const httpsAgent = new HttpsProxyAgent(proxyUrl);
+        
+        // Make the request
+        const response = await axios({
+          method: options.method,
+          url: options.url,
+          headers: options.headers || {},
+          data: options.data,
+          timeout: options.timeout || 30000,
+          httpsAgent,
+          validateStatus: () => true // Don't throw on HTTP errors
+        });
+        
+        console.log(`✅ Request successful via proxy ${proxy.proxy_address}:${proxy.port}, status: ${response.status}`);
+        
+        return {
+          success: response.status >= 200 && response.status < 300,
+          data: response.data,
+          statusCode: response.status,
+          proxyUsed: `${proxy.proxy_address}:${proxy.port}`,
+          error: response.status >= 400 ? `HTTP ${response.status}` : undefined
+        };
+        
+      } catch (error: any) {
+        lastError = error.message;
+        console.error(`❌ Proxy request failed (attempt ${attempt}/${maxRetries}):`, error.message);
+        
+        if (attempt < maxRetries) {
+          console.log(`🔄 Retrying with different proxy in 1 second...`);
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
       }
+    }
+    
+    console.error(`❌ All ${maxRetries} proxy attempts failed. Last error:`, lastError);
+    return {
+      success: false,
+      error: `All proxy attempts failed: ${lastError}`,
+      statusCode: 0
+    };
+  }
+
+  /**
+   * Save cron settings to database
+   */
+  async saveCronSettings(cronSettings: any): Promise<{ success: boolean; message: string }> {
+    try {
+      console.log('💾 Saving cron settings to database...', cronSettings);
       
-      const proxy = proxies.proxies[0];
-      console.log(`🔄 Using proxy: ${proxy.proxy_address}:${proxy.port} (${proxy.country_code})`);
-      
-      // Import axios dynamically to avoid server-side issues
-      const axios = (await import('axios')).default;
-      const HttpsProxyAgent = (await import('https-proxy-agent')).HttpsProxyAgent;
-      
-      // Create proxy agent
-      const proxyUrl = `http://${proxy.username}:${proxy.password}@${proxy.proxy_address}:${proxy.port}`;
-      const httpsAgent = new HttpsProxyAgent(proxyUrl);
-      
-      // Make the request
-      const response = await axios({
-        method: options.method,
-        url: options.url,
-        headers: options.headers || {},
-        data: options.data,
-        timeout: options.timeout || 30000,
-        httpsAgent,
-        validateStatus: () => true // Don't throw on HTTP errors
-      });
-      
-      console.log(`✅ Request successful via proxy ${proxy.proxy_address}:${proxy.port}, status: ${response.status}`);
-      
-      return {
-        success: response.status >= 200 && response.status < 300,
-        data: response.data,
-        statusCode: response.status,
-        proxyUsed: `${proxy.proxy_address}:${proxy.port}`,
-        error: response.status >= 400 ? `HTTP ${response.status}` : undefined
+      const config = await this.getConfig();
+      const updatedConfig = {
+        ...config,
+        cronSettings: this.sanitizeForFirestore(cronSettings),
+        updatedAt: new Date().toISOString()
       };
       
-    } catch (error: any) {
-      console.error('❌ Proxy request failed:', error.message);
+      await this.updateConfig({ cronSettings: this.sanitizeForFirestore(cronSettings) });
       
+      console.log('✅ Cron settings saved successfully');
+      return {
+        success: true,
+        message: 'Cron settings saved successfully'
+      };
+    } catch (error) {
+      console.error('❌ Error saving cron settings:', error);
       return {
         success: false,
-        error: error.message || 'Proxy request failed',
-        statusCode: 0
+        message: `Failed to save cron settings: ${error instanceof Error ? error.message : 'Unknown error'}`
       };
     }
   }
+
+  /**
+   * Get cron settings from database
+   */
+  async getCronSettings(): Promise<any> {
+    try {
+      const config = await this.getConfig();
+      return config.cronSettings || {
+        proxySyncSchedule: {
+          enabled: false,
+          interval: 'hourly',
+          customInterval: 60,
+          lastSync: null,
+          nextSync: null
+        },
+        accountSyncSchedule: {
+          enabled: false,
+          interval: '3hours',
+          customInterval: 180,
+          lastSync: null,
+          nextSync: null
+        },
+        statsUpdateSchedule: {
+          enabled: false,
+          interval: '6hours',
+          customInterval: 360,
+          lastUpdate: null,
+          nextUpdate: null
+        },
+        healthCheckSchedule: {
+          enabled: false,
+          interval: '24hours',
+          customInterval: 1440,
+          lastCheck: null,
+          nextCheck: null
+        }
+      };
+    } catch (error) {
+      console.error('❌ Error getting cron settings:', error);
+      throw error;
+    }
+  }
+
+  // ...existing code...
 }
 
 export const webshareService = WebshareService.getInstance();
