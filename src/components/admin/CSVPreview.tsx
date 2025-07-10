@@ -1,17 +1,18 @@
 'use client';
 
 import React, { useState } from 'react';
-import { AlertTriangle, CheckCircle, FileText, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle, FileText, X, Settings } from 'lucide-react';
 import { CSVParseResult } from '@/lib/csvProcessingService';
 import { ReconInvoiceItem } from '@/types/recon-invoice';
-import TemplateSelection from './TemplateSelection';
 
 interface CSVPreviewProps {
   result: CSVParseResult;
   fileName: string;
   onDismiss: () => void;
-  onGenerateInvoice: (templateId: string) => void;
+  onGenerateInvoice: () => void; // Remove templateId parameter since it will come from settings
+  onOpenSettings?: () => void; // New prop to open settings modal
   isGenerating?: boolean;
+  defaultTemplate?: string; // For display purposes
 }
 
 export default function CSVPreview({ 
@@ -19,13 +20,15 @@ export default function CSVPreview({
   fileName, 
   onDismiss, 
   onGenerateInvoice,
-  isGenerating = false 
+  onOpenSettings,
+  isGenerating = false,
+  defaultTemplate = 'professional-blue' // Default fallback
 }: CSVPreviewProps) {
   const { isValid, items, errors, warnings, totalAmount, itemCount } = result;
-  const [selectedTemplate, setSelectedTemplate] = useState('professional-blue');
+  const [selectedTemplate, setSelectedTemplate] = useState(defaultTemplate);
 
   const handleGenerateInvoice = () => {
-    onGenerateInvoice(selectedTemplate);
+    onGenerateInvoice(); // No longer pass templateId, it will come from user settings
   };
 
   return (
@@ -55,36 +58,32 @@ export default function CSVPreview({
         </button>
       </div>
 
-      {/* Summary Stats */}
-      <div className="grid grid-cols-3 gap-4">
-        <div className="bg-gray-50 rounded-lg p-4 text-center">
-          <div className="text-2xl font-bold text-gray-900">{itemCount}</div>
-          <div className="text-sm text-gray-600">Items Found</div>
+      {/* Summary Stats - Simplified without issues count */}
+      <div className="grid grid-cols-2 gap-6">
+        <div className="bg-gray-50 rounded-lg p-6 text-center">
+          <div className="text-3xl font-bold text-gray-900">{itemCount}</div>
+          <div className="text-sm text-gray-600 mt-1">Items Found</div>
         </div>
-        <div className="bg-gray-50 rounded-lg p-4 text-center">
-          <div className="text-2xl font-bold text-gray-900">R{totalAmount.toFixed(2)}</div>
-          <div className="text-sm text-gray-600">Total Amount</div>
-        </div>
-        <div className="bg-gray-50 rounded-lg p-4 text-center">
-          <div className="text-2xl font-bold text-gray-900">{errors.length + warnings.length}</div>
-          <div className="text-sm text-gray-600">Issues</div>
+        <div className="bg-gray-50 rounded-lg p-6 text-center">
+          <div className="text-3xl font-bold text-green-600">R{totalAmount.toFixed(2)}</div>
+          <div className="text-sm text-gray-600 mt-1">Total Amount</div>
         </div>
       </div>
 
-      {/* Errors */}
-      {errors.length > 0 && (
+      {/* Critical Errors Only (still show if file can't be processed) */}
+      {errors.length > 0 && !isValid && (
         <div className="p-4 bg-red-50 rounded-lg border border-red-200">
           <div className="flex items-start gap-3">
             <AlertTriangle size={20} className="text-red-500 mt-0.5 flex-shrink-0" />
             <div className="flex-1">
-              <h4 className="font-medium text-red-900 mb-2">Errors ({errors.length})</h4>
+              <h4 className="font-medium text-red-900 mb-2">Critical Errors ({errors.length})</h4>
               <div className="space-y-1">
-                {errors.slice(0, 5).map((error, index) => (
+                {errors.slice(0, 3).map((error, index) => (
                   <p key={index} className="text-sm text-red-700">• {error}</p>
                 ))}
-                {errors.length > 5 && (
+                {errors.length > 3 && (
                   <p className="text-sm text-red-600 font-medium">
-                    ... and {errors.length - 5} more errors
+                    ... and {errors.length - 3} more errors
                   </p>
                 )}
               </div>
@@ -93,84 +92,21 @@ export default function CSVPreview({
         </div>
       )}
 
-      {/* Warnings */}
-      {warnings.length > 0 && (
-        <div className="p-4 bg-yellow-50 rounded-lg border border-yellow-200">
-          <div className="flex items-start gap-3">
-            <AlertTriangle size={20} className="text-yellow-500 mt-0.5 flex-shrink-0" />
-            <div className="flex-1">
-              <h4 className="font-medium text-yellow-900 mb-2">Warnings ({warnings.length})</h4>
-              <div className="space-y-1">
-                {warnings.slice(0, 3).map((warning, index) => (
-                  <p key={index} className="text-sm text-yellow-700">• {warning}</p>
-                ))}
-                {warnings.length > 3 && (
-                  <p className="text-sm text-yellow-600 font-medium">
-                    ... and {warnings.length - 3} more warnings
-                  </p>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Data Preview */}
-      {items.length > 0 && (
-        <div className="bg-white border rounded-lg">
-          <div className="px-4 py-3 border-b border-gray-200">
-            <h4 className="font-medium text-gray-900">
-              Data Preview ({items.length} items)
-            </h4>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="text-left py-2 px-4 text-sm font-medium text-gray-700">Title</th>
-                  <th className="text-left py-2 px-4 text-sm font-medium text-gray-700">TSIN</th>
-                  <th className="text-right py-2 px-4 text-sm font-medium text-gray-700">Qty</th>
-                  <th className="text-right py-2 px-4 text-sm font-medium text-gray-700">Unit Price</th>
-                  <th className="text-right py-2 px-4 text-sm font-medium text-gray-700">Total</th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.slice(0, 10).map((item, index) => (
-                  <tr key={index} className="border-b border-gray-100">
-                    <td className="py-2 px-4 text-sm text-gray-900 max-w-xs truncate">
-                      {item.title}
-                    </td>
-                    <td className="py-2 px-4 text-sm text-gray-700">
-                      {item.tsin}
-                    </td>
-                    <td className="py-2 px-4 text-sm text-gray-700 text-right">
-                      {item.quantity}
-                    </td>
-                    <td className="py-2 px-4 text-sm text-gray-700 text-right">
-                      R{item.unitPrice.toFixed(2)}
-                    </td>
-                    <td className="py-2 px-4 text-sm text-gray-900 text-right font-medium">
-                      R{item.totalAmount.toFixed(2)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {items.length > 10 && (
-              <div className="p-3 text-center text-sm text-gray-500 bg-gray-50">
-                ... and {items.length - 10} more items
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Template Selection */}
+      {/* Template Selection Button */}
       {isValid && items.length > 0 && (
-        <TemplateSelection
-          selectedTemplate={selectedTemplate}
-          onTemplateSelect={setSelectedTemplate}
-        />
+        <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border">
+          <div>
+            <h4 className="font-medium text-gray-900">Invoice Template</h4>
+            <p className="text-sm text-gray-600">Configure your invoice layout and colors</p>
+          </div>
+          <button
+            onClick={onOpenSettings}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+          >
+            <Settings size={16} />
+            Select Template
+          </button>
+        </div>
       )}
 
       {/* Action Buttons */}

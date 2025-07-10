@@ -195,12 +195,27 @@ export class CSVProcessingService {
     const normalizedHeaders = headers.map(h => h.toLowerCase().trim());
 
     // Check for Takealot Stock Recon format
-    const takealotReconKeys = ['period', 'tsin_id', 'sku', 'product_title', 'average_selling_price', 'success_fee', 'fulfilment_fee', 'total_claim_value', 'other_outflow'];
-    const hasTakealotKeys = takealotReconKeys.slice(0, 5).every(key => 
-      normalizedHeaders.some(header => header === key)
+    const takealotReconKeys = ['period', 'tsin_id', 'sku', 'total_claim_value'];
+    const hasTakealotKeys = takealotReconKeys.every(key => 
+      normalizedHeaders.some(header => 
+        header === key || 
+        header.includes(key.replace('_', ' ')) ||
+        (key === 'tsin_id' && (header === 'tsin id' || header === 'tsin')) ||
+        (key === 'total_claim_value' && (header === 'total claim value' || header === 'amount'))
+      )
     );
 
-    if (hasTakealotKeys) {
+    // Check for product title column with various possible names
+    const hasProductTitle = normalizedHeaders.some(header => 
+      header === 'product_title' || 
+      header === 'product title' || 
+      header === 'title' ||
+      header === 'description' ||
+      header === 'item description' ||
+      header === 'product'
+    );
+
+    if (hasTakealotKeys && hasProductTitle) {
       return 'takealot_recon';
     }
 
@@ -235,21 +250,26 @@ export class CSVProcessingService {
 
     if (format === 'takealot_recon') {
       const requiredColumns = {
-        'period': 'period',
-        'tsin_id': 'tsin_id',
-        'sku': 'sku', 
-        'product_title': 'product_title',
-        'average_selling_price': 'average_selling_price',
-        'success_fee': 'success_fee',
-        'fulfilment_fee': 'fulfilment_fee',
-        'total_claim_value': 'total_claim_value',
-        'other_outflow': 'other_outflow'
+        'period': ['period'],
+        'tsin_id': ['tsin_id', 'tsin id', 'tsin'],
+        'sku': ['sku'], 
+        'product_title': ['product_title', 'product title', 'title', 'description', 'item description', 'product'],
+        'average_selling_price': ['average_selling_price', 'average selling price', 'selling price', 'price'],
+        'success_fee': ['success_fee', 'success fee'],
+        'fulfilment_fee': ['fulfilment_fee', 'fulfilment fee', 'fulfillment fee'],
+        'total_claim_value': ['total_claim_value', 'total claim value', 'claim value', 'amount', 'total amount'],
+        'other_outflow': ['other_outflow', 'other outflow', 'outflow']
       };
 
-      for (const [key, column] of Object.entries(requiredColumns)) {
-        const index = normalizedHeaders.findIndex(h => h === column);
+      for (const [key, variations] of Object.entries(requiredColumns)) {
+        const index = normalizedHeaders.findIndex(h => 
+          variations.some(variation => h === variation)
+        );
         if (index === -1) {
-          errors.push(`Missing required column for Takealot Recon: "${column}"`);
+          // Only require core columns, make others optional
+          if (['period', 'tsin_id', 'sku', 'product_title'].includes(key)) {
+            errors.push(`Missing required column: one of ${variations.join(', ')}`);
+          }
         } else {
           columnMap[key] = index;
         }

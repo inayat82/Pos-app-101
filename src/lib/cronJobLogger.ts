@@ -423,6 +423,7 @@ export class CronJobLogger {
       offset?: number;
       status?: CronJobLog['status'];
       cronJobName?: string;
+      integrationId?: string; // Add integrationId filter
       startDate?: Date;
       endDate?: Date;
     } = {}
@@ -438,6 +439,9 @@ export class CronJobLogger {
       }
       if (options.cronJobName) {
         query = query.where('cronJobName', '==', options.cronJobName);
+      }
+      if (options.integrationId) {
+        query = query.where('integrationId', '==', options.integrationId);
       }
       if (options.startDate) {
         query = query.where('createdAt', '>=', admin.firestore.Timestamp.fromDate(options.startDate));
@@ -463,6 +467,13 @@ export class CronJobLogger {
       
       docsToProcess.forEach(doc => {
         const data = doc.data();
+        
+        // Additional client-side filtering for integration-specific logs
+        // Only include logs that have an integrationId if we're filtering by integrationId
+        if (options.integrationId && !data.integrationId) {
+          return; // Skip this log
+        }
+        
         logs.push({
           id: doc.id,
           ...data,
@@ -473,11 +484,16 @@ export class CronJobLogger {
         } as CronJobLog);
       });
 
-      // Get total count (this is approximate for performance)
-      const countQuery = await db.collection('logs')
-        .where('adminId', '==', adminId)
-        .get();
-      const total = countQuery.size;
+      // Get total count with the same filters
+      let countQuery = db.collection('logs')
+        .where('adminId', '==', adminId);
+      
+      if (options.integrationId) {
+        countQuery = countQuery.where('integrationId', '==', options.integrationId);
+      }
+      
+      const countSnapshot = await countQuery.get();
+      const total = countSnapshot.size;
 
       return { logs, total, hasMore };
     } catch (error) {

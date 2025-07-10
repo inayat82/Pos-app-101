@@ -25,7 +25,9 @@ export interface ReconInvoiceSettings {
   };
   preferences: {
     invoicePrefix: string;
-    defaultTemplate: string;
+    defaultTemplate: string; // Keep for backward compatibility
+    defaultLayout: string;    // New: separate layout selection
+    defaultColorScheme: string; // New: separate color scheme selection
     autoNumbering: boolean;
     defaultNotes?: string;
   };

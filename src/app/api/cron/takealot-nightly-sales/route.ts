@@ -6,8 +6,6 @@ import { cronJobLogger } from '@/lib/cronJobLogger';
 import { dbAdmin as db } from '@/lib/firebase/firebaseAdmin';
 
 export async function GET(request: NextRequest) {
-  let logId: string | null = null;
-  
   try {
     // Verify this is a cron request
     const authHeader = request.headers.get('authorization');
@@ -15,19 +13,10 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     
-    // Start system-wide logging
-    logId = await cronJobLogger.startExecution({
-      cronJobName: 'takealot-nightly-sales',
-      cronJobType: 'scheduled',
-      cronSchedule: '0 2 * * *', // Every night at 2 AM
-      triggerType: 'cron',
-      triggerSource: 'vercel-cron',
-      apiSource: 'Takealot API',
-      message: 'Starting nightly 30-day sales sync - System-wide',
-      details: 'Automated sync for Last 30 Days sales strategy across all enabled integrations'
-    });
-
     console.log('[NightlySalesCron] Starting nightly 30-day sales sync');
+    
+    // Note: We don't create a system-wide log here anymore
+    // Individual integrations will create their own logs via SalesSyncService
     
     // Get integrations with nightly sales sync enabled
     const integrationsSnapshot = await db.collection('takealotIntegrations').get();
@@ -65,21 +54,56 @@ export async function GET(request: NextRequest) {
 
         console.log(`[NightlySalesCron] Processing 30-day sales for integration ${integrationId}`);
 
-        // Use the new sales sync service
+        // Use the sales sync service with individual method calls
         const syncService = new SalesSyncService(integrationId);
-        const result = await syncService.syncSales(apiKey, 'Last 30 Days', 'cron', adminId);
         
-        results.push({
-          integrationId,
-          adminId,
-          success: true,
-          itemsProcessed: result.totalProcessed,
-          newRecords: result.totalNew,
-          updatedRecords: result.totalUpdated,
-          errors: result.totalErrors
-        });
-        
-        totalItemsProcessed += result.totalProcessed;
+        try {
+          // Start logging for this integration
+          await syncService.startLogging('cron', 'Last 30 Days', adminId);
+          
+          // Fetch sales from API
+          const salesRecords = await syncService.fetchSalesFromAPI(apiKey, 'Last 30 Days', 'cron');
+          
+          // Process the fetched records
+          const result = await syncService.processSalesRecords(salesRecords);
+          
+          // Complete logging
+          await syncService.completeLogging(result, 'Last 30 Days', 'cron', true);
+          
+          results.push({
+            integrationId,
+            adminId,
+            success: true,
+            itemsProcessed: result.totalProcessed,
+            newRecords: result.totalNew,
+            updatedRecords: result.totalUpdated,
+            errors: result.totalErrors
+          });
+          
+          totalItemsProcessed += result.totalProcessed;
+          
+        } catch (syncError: any) {
+          console.error(`[NightlySalesCron] Sync error for integration ${integrationId}:`, syncError);
+          
+          // Complete logging with error
+          try {
+            await syncService.completeLogging(
+              { totalProcessed: 0, totalNew: 0, totalUpdated: 0, totalErrors: 1, totalSkipped: 0 },
+              'Last 30 Days',
+              'cron',
+              false
+            );
+          } catch (logError) {
+            console.error(`[NightlySalesCron] Logging error for integration ${integrationId}:`, logError);
+          }
+          
+          results.push({
+            integrationId,
+            adminId,
+            success: false,
+            error: syncError.message
+          });
+        }
         
       } catch (error: any) {
         console.error(`[NightlySalesCron] Error processing integration ${integrationId}:`, error);
@@ -101,17 +125,7 @@ export async function GET(request: NextRequest) {
 
     console.log(`[NightlySalesCron] ${summaryMessage}`);
 
-    // Complete centralized logging
-    if (logId) {
-      await cronJobLogger.completeExecution(logId, {
-        status: failed > 0 && successful === 0 ? 'failure' : 'success',
-        message: summaryMessage,
-        totalReads: totalItemsProcessed,
-        totalWrites: totalItemsProcessed,
-        itemsProcessed: totalItemsProcessed,
-        details: `Processed ${results.length} integrations: ${successful} successful, ${failed} failed`
-      });
-    }
+    // Note: No system-wide logging - individual integrations handle their own logs
 
     return NextResponse.json({
       success: true,
@@ -130,15 +144,7 @@ export async function GET(request: NextRequest) {
   } catch (error: any) {
     console.error('[NightlySalesCron] Fatal error in nightly 30-day sales sync:', error);
     
-    // Complete centralized logging with error
-    if (logId) {
-      await cronJobLogger.completeExecution(logId, {
-        status: 'failure',
-        message: 'Fatal error in nightly 30-day sales sync',
-        errorDetails: error.message,
-        stackTrace: error.stack
-      });
-    }
+    // Note: No system-wide logging - individual integrations handle their own logs
 
     return NextResponse.json(
       { 

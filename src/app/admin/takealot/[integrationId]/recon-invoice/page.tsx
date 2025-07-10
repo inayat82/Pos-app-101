@@ -59,7 +59,7 @@ export default function ReconInvoicePage({}: ReconInvoicePageProps) {
   };
 
   // Handle invoice generation
-  const handleGenerateInvoice = async (templateId: string = 'professional-blue') => {
+  const handleGenerateInvoice = async () => {
     if (!csvResult || !uploadedFile || !settings) return;
 
     setIsGeneratingInvoice(true);
@@ -67,23 +67,17 @@ export default function ReconInvoicePage({}: ReconInvoicePageProps) {
       const { InvoiceStorageService } = await import('@/lib/invoiceStorageService');
       const { InvoicePdfGenerator } = await import('@/lib/invoicePdfGenerator');
       
-      // Generate and store invoice
+      // Generate and store invoice - template will be determined from settings
       const { invoice, pdfBlob } = await InvoiceStorageService.generateAndStoreInvoice(
         integrationId,
         integrationInfo?.accountName || 'Unknown Integration',
         uploadedFile.name,
         csvResult.items,
-        settings,
-        templateId
+        settings
       );
       
       // Download PDF
       InvoicePdfGenerator.downloadPDF(pdfBlob, invoice.fileName);
-      
-      showSuccessNotification(
-        `Invoice ${invoice.invoiceNumber} generated successfully!`,
-        `Total Amount: R${invoice.totalAmount.toFixed(2)}\nItems: ${invoice.itemCount}\nTemplate: ${templateId}`
-      );
       
       // Refresh invoice data
       refreshData();
@@ -123,10 +117,7 @@ export default function ReconInvoicePage({}: ReconInvoicePageProps) {
     if (window.confirm(`Are you sure you want to delete invoice ${invoice.invoiceNumber}? This action cannot be undone.`)) {
       try {
         await deleteInvoice(invoice.id);
-        showSuccessNotification(
-          'Invoice deleted successfully!',
-          `Invoice ${invoice.invoiceNumber} has been removed from the database.`
-        );
+        // Invoice deleted successfully - no popup needed
       } catch (error) {
         console.error('Error deleting invoice:', error);
         showErrorNotification('Failed to delete invoice', error instanceof Error ? error : undefined);
@@ -138,7 +129,7 @@ export default function ReconInvoicePage({}: ReconInvoicePageProps) {
   const handleSaveSettings = async (newSettings: ReconInvoiceSettings) => {
     try {
       await saveSettings(newSettings);
-      alert('Settings saved successfully!');
+      // Settings saved successfully - no popup needed
     } catch (error) {
       console.error('Error saving settings:', error);
       throw error; // Re-throw to let modal handle it
@@ -223,7 +214,9 @@ export default function ReconInvoicePage({}: ReconInvoicePageProps) {
                   fileName={uploadedFile?.name || 'Unknown file'}
                   onDismiss={handleDismissPreview}
                   onGenerateInvoice={handleGenerateInvoice}
+                  onOpenSettings={() => setIsSettingsOpen(true)}
                   isGenerating={isGeneratingInvoice}
+                  defaultTemplate={settings?.preferences?.defaultTemplate}
                 />
               ) : (
                 <CSVUploadArea 

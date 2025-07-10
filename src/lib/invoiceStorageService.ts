@@ -1,7 +1,7 @@
 import { db } from '@/lib/firebase/firebase';
 import { collection, doc, setDoc, getDocs, query, where, orderBy, limit, deleteDoc, updateDoc } from 'firebase/firestore';
 import { ReconInvoice, ReconInvoiceItem, ReconInvoiceSettings } from '@/types/recon-invoice';
-import { InvoicePdfGenerator, InvoiceGenerationData } from './invoicePdfGenerator';
+import { InvoicePdfGenerator, InvoiceGenerationData, createTemplateFromLayoutAndColor } from './invoicePdfGenerator';
 
 export class InvoiceStorageService {
   private static COLLECTION_NAME = 'reconInvoices';
@@ -15,7 +15,7 @@ export class InvoiceStorageService {
     csvFileName: string,
     items: ReconInvoiceItem[],
     settings: ReconInvoiceSettings,
-    templateId: string = 'professional-blue'
+    templateId?: string // Optional override
   ): Promise<{ invoice: ReconInvoice; pdfBlob: Blob }> {
     try {
       // Generate invoice number
@@ -33,8 +33,18 @@ export class InvoiceStorageService {
         fileName: csvFileName
       };
 
+      // Determine template ID: use override, or build from layout+color, or fallback to defaultTemplate
+      let finalTemplateId = templateId;
+      if (!finalTemplateId) {
+        if (settings.preferences.defaultLayout && settings.preferences.defaultColorScheme) {
+          finalTemplateId = `${settings.preferences.defaultLayout}-${settings.preferences.defaultColorScheme}`;
+        } else {
+          finalTemplateId = settings.preferences.defaultTemplate || 'professional-blue';
+        }
+      }
+
       // Generate PDF
-      const pdfBlob = await InvoicePdfGenerator.generateInvoicePDF(invoiceData, templateId);
+      const pdfBlob = await InvoicePdfGenerator.generateInvoicePDF(invoiceData, finalTemplateId);
       
       // Create invoice record
       const invoiceId = `${integrationId}_${invoiceNumber}_${now.getTime()}`;
@@ -51,7 +61,7 @@ export class InvoiceStorageService {
         monthYear,
         totalAmount,
         itemCount: items.length,
-        templateUsed: templateId,
+        templateUsed: finalTemplateId,
         status: 'generated',
         items,
         businessInfo: settings.businessInfo,
@@ -219,6 +229,8 @@ export class InvoiceStorageService {
           preferences: {
             invoicePrefix: invoice.invoiceNumber.replace(/\d+$/, ''),
             defaultTemplate: templateId,
+            defaultLayout: templateId.split('-')[0] || 'professional',
+            defaultColorScheme: templateId.split('-')[1] || 'blue',
             autoNumbering: true,
             defaultNotes: invoice.notes
           }

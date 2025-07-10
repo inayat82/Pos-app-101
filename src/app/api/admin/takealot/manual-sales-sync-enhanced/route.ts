@@ -8,8 +8,7 @@ import { dbAdmin as db } from '@/lib/firebase/firebaseAdmin';
 export async function POST(request: NextRequest) {
   console.log('[ManualSalesSync] API endpoint called');
   try {
-    const { integrationId, strategy, adminId, useEnhanced: requestEnhanced = true } = await request.json();
-    let useEnhanced = requestEnhanced;
+    const { integrationId, strategy, adminId, useEnhanced = true } = await request.json();
     console.log('[ManualSalesSync] Request data:', { integrationId, strategy, adminId, useEnhanced });
 
     if (!integrationId) {
@@ -61,8 +60,10 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    // Use enhanced sync strategy if requested (default)
-    if (useEnhanced) {
+    // Use enhanced sync strategy (default)
+    let shouldUseEnhanced = useEnhanced;
+    
+    if (shouldUseEnhanced) {
       console.log('[ManualSalesSync] Using enhanced sync strategy with concurrent processing');
       
       try {
@@ -112,53 +113,56 @@ export async function POST(request: NextRequest) {
               needsUserChoice: false
             });
           } else {
-            // Enhanced sync failed completely, fall back to legacy sync
-            console.log('[ManualSalesSync] Enhanced sync failed completely, falling back to legacy sync');
-            useEnhanced = false; // Will trigger legacy fallback below
+            // Fall back to legacy sync
+            console.log('[ManualSalesSync] Enhanced sync failed, falling back to legacy sync');
+            shouldUseEnhanced = false;
           }
         }
       } catch (enhancedError: any) {
         console.error('[ManualSalesSync] Enhanced sync error, falling back to legacy:', enhancedError.message);
-        // Enhanced sync had an error, fall back to legacy sync
-        useEnhanced = false; // Will trigger legacy fallback below
+        // Fall back to legacy sync
+        shouldUseEnhanced = false;
       }
     }
 
-    // Legacy sync fallback - Use the actual available methods
-    if (!useEnhanced) {
-      console.log('[ManualSalesSync] Using legacy sync strategy with available methods');
+    // Legacy sync fallback
+    if (!shouldUseEnhanced) {
+      console.log('[ManualSalesSync] Using legacy sync strategy');
+      
+      // Use legacy SalesSyncService as fallback
+      const syncService = new SalesSyncService(integrationId);
       
       try {
-        const syncService = new SalesSyncService(integrationId);
-        
         // Start logging
-        await syncService.startLogging('manual', strategy, actualAdminId);
+        await syncService.startLogging('manual', 'enhanced-fallback', actualAdminId);
         
-        // Fetch sales using the available API
-        const salesRecords = await syncService.fetchSalesFromAPI(apiKey, strategy, 'manual');
-        
-        // Process the fetched records
+        // Get integration data for API key
+        const salesRecords = await syncService.fetchSalesFromAPI(apiKey, 'Last 100', 'manual');
         const result = await syncService.processSalesRecords(salesRecords);
         
         // Complete logging
-        await syncService.completeLogging(result, strategy, 'manual', true);
+        await syncService.completeLogging(result, 'enhanced-fallback', 'manual', true);
 
         return NextResponse.json({
           success: true,
           result: {
-            totalProcessed: result.totalProcessed || 0,
-            neonRecords: result.totalNew + result.totalUpdated || 0,
-            firebaseRecords: 0,
-            strategy: 'legacy-firebase-primary'
+            totalProcessed: result.totalProcessed,
+            neonRecords: 0, // Legacy sync doesn't use Neon
+            firebaseRecords: result.totalNew + result.totalUpdated,
+            strategy: 'firebase-legacy'
           },
-          message: `Legacy sales sync completed: ${result.totalProcessed} records processed`,
+          message: 'Legacy sales sync completed successfully',
           needsUserChoice: false
         });
+        
       } catch (legacyError: any) {
-        console.error('[ManualSalesSync] Legacy sync also failed:', legacyError.message);
+        // Complete logging with error
+        const errorResult = { totalProcessed: 0, totalNew: 0, totalUpdated: 0, totalErrors: 1, totalSkipped: 0 };
+        await syncService.completeLogging(errorResult, 'enhanced-fallback', 'manual', false);
+        
         return NextResponse.json({
           success: false,
-          error: `Both enhanced and legacy sync failed. Legacy error: ${legacyError.message}`
+          error: legacyError.message || 'Legacy sales sync failed'
         }, { status: 500 });
       }
     }

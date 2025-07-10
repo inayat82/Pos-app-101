@@ -3,6 +3,10 @@
 import React, { useState } from 'react';
 import { X, Building2, User, Settings as SettingsIcon } from 'lucide-react';
 import { ReconInvoiceSettings } from '@/types/recon-invoice';
+import { getRandomTemplate, invoiceTemplates, getRandomLayout, getRandomColorScheme } from '@/lib/invoicePdfGenerator';
+import TemplateSelection from './TemplateSelection';
+import LayoutSelection from './LayoutSelection';
+import ColorSchemeSelection from './ColorSchemeSelection';
 
 interface ReconInvoiceSettingsModalProps {
   isOpen: boolean;
@@ -23,8 +27,23 @@ export default function ReconInvoiceSettingsModal({
 }: ReconInvoiceSettingsModalProps) {
   const [activeTab, setActiveTab] = useState<'business' | 'customer' | 'preferences'>('business');
   const [isSaving, setIsSaving] = useState(false);
-  const [settings, setSettings] = useState<ReconInvoiceSettings>(
-    initialSettings || {
+  const [settings, setSettings] = useState<ReconInvoiceSettings>(() => {
+    // If we have initial settings, use them, otherwise create new ones with random template
+    if (initialSettings) {
+      // Handle backward compatibility: if defaultLayout or defaultColorScheme are missing,
+      // derive them from defaultTemplate or use random values
+      const settingsWithDefaults = {
+        ...initialSettings,
+        preferences: {
+          ...initialSettings.preferences,
+          defaultLayout: initialSettings.preferences.defaultLayout || getRandomLayout(),
+          defaultColorScheme: initialSettings.preferences.defaultColorScheme || getRandomColorScheme(),
+        }
+      };
+      return settingsWithDefaults;
+    }
+    
+    return {
       businessInfo: {
         companyName: '',
         tradingName: integrationName,
@@ -49,12 +68,14 @@ export default function ReconInvoiceSettingsModal({
       },
       preferences: {
         invoicePrefix: `${integrationName.substring(0, 2).toUpperCase()}-`,
-        defaultTemplate: 'professional-blue',
+        defaultTemplate: getRandomTemplate(), // Keep for backward compatibility
+        defaultLayout: getRandomLayout(), // New: separate layout selection
+        defaultColorScheme: getRandomColorScheme(), // New: separate color scheme selection
         autoNumbering: true,
         defaultNotes: '',
       },
-    }
-  );
+    };
+  });
 
   const handleSave = async () => {
     setIsSaving(true);
@@ -401,7 +422,7 @@ export default function ReconInvoiceSettingsModal({
   );
 
   const renderPreferencesForm = () => (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -421,41 +442,46 @@ export default function ReconInvoiceSettingsModal({
             Example: "MT-" will generate invoices like "MT-001", "MT-002"
           </p>
         </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Default Template
-          </label>
-          <select
-            value={settings.preferences.defaultTemplate}
+        
+        <div className="flex items-center">
+          <input
+            type="checkbox"
+            id="autoNumbering"
+            checked={settings.preferences.autoNumbering}
             onChange={(e) => setSettings({
               ...settings,
-              preferences: { ...settings.preferences, defaultTemplate: e.target.value }
+              preferences: { ...settings.preferences, autoNumbering: e.target.checked }
             })}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="professional-blue">Professional Blue</option>
-            <option value="emerald-green">Emerald Green</option>
-            <option value="crimson-red">Crimson Red</option>
-            <option value="midnight-dark">Midnight Dark</option>
-            <option value="amethyst-purple">Amethyst Purple</option>
-          </select>
+            className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+          />
+          <label htmlFor="autoNumbering" className="ml-2 text-sm text-gray-700">
+            Enable automatic invoice numbering
+          </label>
         </div>
       </div>
 
-      <div className="flex items-center">
-        <input
-          type="checkbox"
-          id="autoNumbering"
-          checked={settings.preferences.autoNumbering}
-          onChange={(e) => setSettings({
+      {/* Layout Selection */}
+      <div>
+        <LayoutSelection
+          selectedLayout={settings.preferences.defaultLayout}
+          onLayoutSelect={(layoutId) => setSettings({
             ...settings,
-            preferences: { ...settings.preferences, autoNumbering: e.target.checked }
+            preferences: { ...settings.preferences, defaultLayout: layoutId }
           })}
-          className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+          title="Choose Invoice Layout"
         />
-        <label htmlFor="autoNumbering" className="ml-2 text-sm text-gray-700">
-          Enable automatic invoice numbering
-        </label>
+      </div>
+
+      {/* Color Scheme Selection */}
+      <div>
+        <ColorSchemeSelection
+          selectedColorScheme={settings.preferences.defaultColorScheme}
+          onColorSchemeSelect={(colorSchemeId) => setSettings({
+            ...settings,
+            preferences: { ...settings.preferences, defaultColorScheme: colorSchemeId }
+          })}
+          title="Choose Color Scheme"
+        />
       </div>
 
       <div>

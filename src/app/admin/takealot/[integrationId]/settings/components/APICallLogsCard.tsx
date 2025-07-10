@@ -16,6 +16,7 @@ import {
 
 interface APICallLogsCardProps {
   integrationId: string;
+  currentUser: any; // Add currentUser prop
   showMessage: (type: 'success' | 'error', message: string) => void;
 }
 
@@ -40,6 +41,7 @@ interface ApiLog {
 
 const APICallLogsCard: React.FC<APICallLogsCardProps> = ({
   integrationId,
+  currentUser,
   showMessage
 }) => {
   // API Logs State
@@ -52,28 +54,28 @@ const APICallLogsCard: React.FC<APICallLogsCardProps> = ({
 
   // Load API logs function
   const loadApiLogs = useCallback(async (page: number = 1) => {
-    if (!integrationId) return;
+    if (!integrationId || !currentUser?.id) {
+      return;
+    }
 
     setIsLoadingLogs(true);
     try {
-      console.log(`Loading API logs for integration: ${integrationId}, page: ${page}`);
+      const url = `/api/admin/cron-job-logs?limit=${logsPerPage}&offset=${(page - 1) * logsPerPage}&integrationId=${encodeURIComponent(integrationId)}&adminId=${encodeURIComponent(currentUser.id)}`;
       
-      // For now, let's use the SuperAdmin API as a workaround to get logs
-      const response = await fetch(`/api/superadmin/cron-job-logs?limit=${logsPerPage}&offset=${(page - 1) * logsPerPage}`);
-      
-      console.log('Fetch logs response status:', response.status);
+      // Use the admin API with integrationId and adminId filter to get only logs for this integration
+      const response = await fetch(url, {
+        method: 'GET',
+        credentials: 'include', // Include cookies for authentication
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
       
       if (response.ok) {
         const data = await response.json();
-        console.log('Fetch logs response data:', data);
         
-        // Filter logs for this integration (since SuperAdmin API returns all logs)
-        const filteredLogs = data.logs?.filter((log: any) => 
-          log.integrationId === integrationId || 
-          (log.adminId && integrationId.includes(log.adminId)) ||
-          log.cronJobName?.includes('sales') || log.cronJobName?.includes('product')
-        ).map((log: any) => ({
-          // Map SuperAdmin API fields to component expected fields
+        // Map admin API fields to component expected fields
+        const mappedLogs = data.logs?.map((log: any) => ({
           id: log.id,
           createdAt: log.createdAt || log.timestamp,
           operation: log.cronJobName?.replace(/-/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase()) || 'Manual Sync',
@@ -92,32 +94,27 @@ const APICallLogsCard: React.FC<APICallLogsCardProps> = ({
                  log.status || 'unknown'
         })) || [];
         
-        console.log(`Filtered ${filteredLogs.length} logs for integration ${integrationId}`);
-        
-        setApiLogs(filteredLogs);
-        setTotalLogs(filteredLogs.length);
-        setTotalPages(Math.ceil(filteredLogs.length / logsPerPage));
+        setApiLogs(mappedLogs);
+        setTotalLogs(data.total || mappedLogs.length);
+        setTotalPages(Math.ceil((data.total || mappedLogs.length) / logsPerPage));
         setCurrentPage(page);
-        console.log(`Loaded ${filteredLogs.length} API logs (page ${page})`);
       } else {
         const errorText = await response.text();
-        console.error('Failed to load API logs:', response.status, errorText);
         showMessage('error', `Failed to load API logs: ${response.status} ${errorText}`);
       }
     } catch (error) {
-      console.error('Error loading API logs:', error);
       showMessage('error', `Error loading API logs: ${error}`);
     } finally {
       setIsLoadingLogs(false);
     }
-  }, [integrationId, logsPerPage, showMessage]);
+  }, [integrationId, currentUser?.id, logsPerPage, showMessage]);
 
   // Load logs on component mount and when dependencies change
   useEffect(() => {
-    if (integrationId) {
+    if (integrationId && currentUser?.id) {
       loadApiLogs(1);
     }
-  }, [integrationId, logsPerPage, loadApiLogs]);
+  }, [integrationId, currentUser?.id, logsPerPage, loadApiLogs]);
 
   // Helper function to format timestamp components
   const getTimestampDisplay = (createdAt: string | undefined) => {

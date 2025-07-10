@@ -112,6 +112,24 @@ export default function SettingsPage({ params }: SettingsPageProps) {
 
   return (
     <div className="space-y-6">
+      {/* Page Header */}
+      <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900 mb-2">Takealot Settings</h1>
+            <p className="text-gray-600">
+              Configure your Takealot integration settings and sync preferences.
+            </p>
+          </div>
+          <a
+            href={`/admin/takealot/${integrationId}/sync-testing`}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            🧪 Sync Testing Lab
+          </a>
+        </div>
+      </div>
+
       {/* Success/Error Messages */}
       {generalUIMessage.type && (
         <div className={`p-4 rounded-xl border shadow-sm ${
@@ -155,6 +173,7 @@ export default function SettingsPage({ params }: SettingsPageProps) {
         {/* API Call Logs */}
         <APICallLogsCard 
           integrationId={integrationId}
+          currentUser={currentUser}
           showMessage={showMessage}
         />
 
