@@ -1,11 +1,9 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { FiSearch, FiRefreshCw, FiTrendingUp, FiDollarSign, FiPackage, FiEye, FiFilter, FiDownload, FiPlay, FiPause } from 'react-icons/fi';
+import React, { useState, useEffect, useMemo } from 'react';
+import { FiSearch, FiTrendingUp, FiDollarSign, FiPackage, FiFilter } from 'react-icons/fi';
 import { useAuth } from '@/context/AuthContext';
 import { usePageTitle } from '@/context/PageTitleContext';
-import { db } from '@/lib/firebase/firebase';
-import { collection, query, where, getDocs, Timestamp } from 'firebase/firestore';
 
 interface AutoPriceProduct {
   id: string;
@@ -15,11 +13,13 @@ interface AutoPriceProduct {
   sku: string;
   title: string;
   imageUrl?: string;
-  status: 'buyable' | 'loading' | 'out_of_stock' | 'unavailable';
+  status: string;
   ourPrice: number;
   rrp: number;
-  createdAt: Date | Timestamp;
-  updatedAt: Date | Timestamp;
+  createdAt: Date;
+  updatedAt: Date;
+  offerUrl?: string;
+  plid?: string;
   
   // Stock information
   stock?: number;
@@ -44,8 +44,8 @@ interface AutoPriceProduct {
   scrapingDuration?: number;
   
   // Calculated fields
-  winDifference?: number; // ourPrice - scrapedWinnerSellerPrice
-  winPrice?: number; // scrapedWinnerSellerPrice
+  winDifference?: number;
+  winPrice?: number;
   posBarcode?: string;
   posPrice?: number;
   profitLoss?: number;
@@ -69,17 +69,26 @@ interface AutoPriceStats {
 
 // Helper functions for badge styling
 const getStatusBadge = (status: string) => {
-  switch (status) {
-    case 'buyable':
-      return 'bg-green-100 text-green-800';
+  const lowerStatus = status.toLowerCase();
+  if (lowerStatus.includes('buyable')) {
+    return 'bg-green-100 text-green-800';
+  }
+  if (lowerStatus.includes('out of stock')) {
+    return 'bg-yellow-100 text-yellow-800';
+  }
+  if (lowerStatus.includes('disabled')) {
+    return 'bg-red-100 text-red-800';
+  }
+  if (lowerStatus.includes('not buyable')) {
+    return 'bg-gray-100 text-gray-800';
+  }
+  switch (lowerStatus) {
     case 'loading':
-      return 'bg-yellow-100 text-yellow-800';
-    case 'out_of_stock':
-      return 'bg-red-100 text-red-800';
+      return 'bg-blue-100 text-blue-800';
     case 'unavailable':
       return 'bg-gray-100 text-gray-800';
     default:
-      return 'bg-gray-100 text-gray-800';
+      return 'bg-gray-200 text-gray-900';
   }
 };
 
@@ -90,306 +99,253 @@ const formatCurrency = (amount: number) => {
   }).format(amount);
 };
 
-export default function TakealotAutoPricePage({ params }: { params: Promise<{ integrationId: string }> }) {
+export default function AutoPricePage({ params }: { params: { integrationId: string } }) {
+  const { integrationId } = params;
   const { currentUser } = useAuth();
   const { setPageTitle } = usePageTitle();
-  
-  // Fix for Next.js 15 - params are now async
-  const resolvedParams = React.use(params);
-  const { integrationId } = resolvedParams;
 
+  // State management
   const [products, setProducts] = useState<AutoPriceProduct[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [tempSearchTerm, setTempSearchTerm] = useState('');
+  const [statusFilters, setStatusFilters] = useState<string[]>(['buyable']); // Default to buyable
+  const [tempStatusFilters, setTempStatusFilters] = useState<string[]>(['buyable']);
+  const [isFilterDrawerOpen, setIsFilterDrawerOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage, setItemsPerPage] = useState(50);
-  const [stats, setStats] = useState<AutoPriceStats | null>(null);
-  const [selectedProduct, setSelectedProduct] = useState<AutoPriceProduct | null>(null);
-  const [showProductModal, setShowProductModal] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<string[]>([]);
-  const [priceFilter, setPriceFilter] = useState({
-    min: '',
-    max: ''
-  });
+  const [itemsPerPage, setItemsPerPage] = useState(25); // Show more products per page
+  const [scrapingProduct, setScrapingProduct] = useState<string | null>(null); // Track which product is being scraped
 
   useEffect(() => {
-    setPageTitle('Takealot Auto Price');
-    return () => setPageTitle('');
+    setPageTitle('Auto Price Management');
   }, [setPageTitle]);
 
-  useEffect(() => {
-    if (currentUser && integrationId) {
-      loadAutoPriceProducts();
-    }
-  }, [currentUser, integrationId]);
-
-  const loadAutoPriceProducts = async () => {
+  // Function to scrape single product
+  const scrapeSingleProduct = async (product: AutoPriceProduct) => {
+    setScrapingProduct(product.id);
     try {
-      setLoading(true);
-      
-      console.log('Loading auto price products for integration:', integrationId);
+      const response = await fetch(`/api/admin/auto-price/scrape-single`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          integrationId,
+          productId: product.id,
+          tsin: product.tsin,
+          sku: product.sku,
+        }),
+      });
 
-      // Try takealot_offers first (same as products page)
-      const offersQuery = query(
-        collection(db, 'takealot_offers'),
-        where('integrationId', '==', integrationId)
-      );
-      
-      const offersSnapshot = await getDocs(offersQuery);
-      console.log('Found in takealot_offers:', offersSnapshot.size);
-
-      if (offersSnapshot.size > 0) {
-        const autoProducts: AutoPriceProduct[] = offersSnapshot.docs.map(doc => {
-          const data = doc.data();
-          
-          // Extract stock data from arrays if available
-          const stockAtTakealot = data.stock_at_takealot || [];
-          
-          return {
-            id: doc.id,
-            integrationId,
-            adminId: currentUser?.uid || '',
-            tsin: data.tsin_id || data.offer_id || '',
-            sku: data.sku || data.offer_id || '',
-            title: data.title || data.product_title || '',
-            imageUrl: data.image_url_1 || data.image_url || '',
-            status: data.status === 'Buyable' ? 'buyable' : 
-                   data.status === 'Loading' ? 'loading' :
-                   data.status === 'Out of Stock' ? 'out_of_stock' : 'unavailable',
-            ourPrice: data.selling_price || data.sell_price || data.price || 0,
-            rrp: data.rrp || data.recommended_retail_price || 0,
-            createdAt: data.created_at || new Date(),
-            updatedAt: data.updated_at || new Date(),
-            
-            // Stock information
-            stock: data.stock_at_takealot_total || 0,
-            stock_dbn: stockAtTakealot.find((s: any) => s.warehouse?.name === 'DBN')?.quantity_available || 0,
-            stock_cpt: stockAtTakealot.find((s: any) => s.warehouse?.name === 'CPT')?.quantity_available || 0,
-            stock_jhb: stockAtTakealot.find((s: any) => s.warehouse?.name === 'JHB')?.quantity_available || 0,
-            
-            // Sales metrics
-            sold_30_days: data.last_30_days_sold || data.tsinCalculatedMetrics?.last30DaysSold || 0,
-            total_sold: data.total_sold || data.tsinCalculatedMetrics?.totalSold || 0,
-            
-            // Auto Price specific fields (initially empty - to be populated by scraping)
-            scrapedRating: undefined,
-            scrapedReviewCount: undefined,
-            scrapedWinnerSeller: undefined,
-            scrapedWinnerSellerPrice: undefined,
-            scrapedTotalSellers: undefined,
-            lastScrapedAt: undefined,
-            scrapingStatus: 'idle',
-            scrapingErrorMessage: undefined,
-            proxyUsed: undefined,
-            scrapingDuration: undefined,
-            
-            // Calculated fields (to be computed)
-            winDifference: undefined,
-            winPrice: undefined,
-            posBarcode: data.barcode || '',
-            posPrice: data.selling_price || data.sell_price || data.price || 0,
-            profitLoss: undefined,
-            minPrice: undefined,
-            maxPrice: undefined,
-          };
-        });
-        
-        setProducts(autoProducts);
+      if (response.ok) {
+        // Reload products to get updated data
+        await loadProducts();
+        alert('Product scraped successfully!');
       } else {
-        // Try takealotProducts as fallback
-        const productsQuery = query(
-          collection(db, 'takealotProducts'),
-          where('integrationId', '==', integrationId)
-        );
-        
-        const productsSnapshot = await getDocs(productsQuery);
-        console.log('Found in takealotProducts:', productsSnapshot.size);
-        
-        if (productsSnapshot.size > 0) {
-          const autoProducts: AutoPriceProduct[] = productsSnapshot.docs.map(doc => {
-            const data = doc.data();
-            
-            return {
-              id: doc.id,
-              integrationId,
-              adminId: currentUser?.uid || '',
-              tsin: data.tsin_id || data.tsin || '',
-              sku: data.sku || '',
-              title: data.title || '',
-              imageUrl: data.image_url || '',
-              status: data.status === 'Buyable' ? 'buyable' : 
-                     data.status === 'Loading' ? 'loading' :
-                     data.status === 'Out of Stock' ? 'out_of_stock' : 'unavailable',
-              ourPrice: data.price || data.sell_price || 0,
-              rrp: data.rrp || 0,
-              createdAt: data.created_at || new Date(),
-              updatedAt: data.updated_at || new Date(),
-              
-              // Stock information
-              stock: data.stock || 0,
-              
-              // Auto Price specific fields (initially empty)
-              scrapedRating: undefined,
-              scrapedReviewCount: undefined,
-              scrapedWinnerSeller: undefined,
-              scrapedWinnerSellerPrice: undefined,
-              scrapedTotalSellers: undefined,
-              lastScrapedAt: undefined,
-              scrapingStatus: 'idle',
-              scrapingErrorMessage: undefined,
-              proxyUsed: undefined,
-              scrapingDuration: undefined,
-              
-              // Calculated fields
-              winDifference: undefined,
-              winPrice: undefined,
-              posBarcode: data.barcode || '',
-              posPrice: data.price || data.sell_price || 0,
-              profitLoss: undefined,
-              minPrice: undefined,
-              maxPrice: undefined,
-            };
-          });
-          
-          setProducts(autoProducts);
-        } else {
-          console.log('No products found in either collection');
-          setProducts([]);
-        }
+        alert('Failed to scrape product. Please try again.');
+      }
+    } catch (error) {
+      console.error('Error scraping product:', error);
+      alert('Error occurred while scraping product.');
+    } finally {
+      setScrapingProduct(null);
+    }
+  };
+
+  // Filter products based on search term and status filters
+  const filteredProducts = useMemo(() => {
+    return products.filter(product => {
+      const matchesSearch = !searchTerm || 
+        product.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        product.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        product.tsin.toLowerCase().includes(searchTerm.toLowerCase());
+      
+      const matchesStatus = statusFilters.length === 0 || 
+        statusFilters.includes(product.status);
+      
+      return matchesSearch && matchesStatus;
+    });
+  }, [products, searchTerm, statusFilters]);
+
+  // Get unique statuses for filtering
+  const uniqueStatuses = useMemo(() => {
+    const statuses = [...new Set(products.map(p => p.status))];
+    return statuses.sort();
+  }, [products]);
+
+  useEffect(() => {
+    loadProducts();
+  }, [integrationId, currentUser]);
+
+  const loadProducts = async () => {
+    if (!currentUser) return;
+    
+    setLoading(true);
+    setError(null);
+    try {
+      console.log('Loading enhanced products from new Neon tables for auto-price, integration:', integrationId);
+      
+      // Call the paginated API route to get products with sales analytics
+      const response = await fetch('/api/admin/takealot/get-products-paginated', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          integrationId,
+          adminId: currentUser?.uid,
+          filters: {
+            // Add any specific filters for auto-pricing if needed
+          }
+        })
+      });
+
+      const data = await response.json();
+      
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Failed to fetch enhanced products');
+      }
+
+      console.log('Found enhanced products in new Neon tables:', data.data.length);
+      
+      if (data.data.length === 0) {
+        console.log('No enhanced products found for integration:', integrationId);
+        setProducts([]);
+        return;
       }
       
-      // Calculate basic stats from loaded products
-      const totalProducts = products.length;
-      const scrapedToday = 0; // Will be calculated when scraping is implemented
-      const pendingScraping = 0; // Will be calculated when scraping is implemented  
-      const averageWinDifference = 0; // Will be calculated when scraping data is available
-      
-      setStats({
-        totalProducts,
-        scrapedToday,
-        pendingScraping,
-        averageWinDifference,
-        successRate24h: 0,
-        competitiveProducts: 0,
-        overPricedProducts: 0,
-        potentialSavings: 0
+      const autoProducts: AutoPriceProduct[] = data.data.map((product: any) => {
+        console.log('Processing product:', product.id, 'with keys:', Object.keys(product));
+        
+        // Helper function to safely extract string values
+        const safeString = (value: any): string => {
+          if (typeof value === 'string') return value;
+          if (typeof value === 'number') return value.toString();
+          if (value === null || value === undefined) return '';
+          if (typeof value === 'object') {
+            console.log('Converting object to string:', value);
+            return JSON.stringify(value);
+          }
+          return String(value);
+        };
+
+        // Helper function to safely extract number values
+        const safeNumber = (value: any): number => {
+          if (typeof value === 'number') return value;
+          if (typeof value === 'string') {
+            const parsed = parseFloat(value.replace(/[^\d.-]/g, '')); // Remove non-numeric characters
+            return isNaN(parsed) ? 0 : parsed;
+          }
+          return 0;
+        };
+        
+        return {
+          id: product.id?.toString() || '',
+          integrationId,
+          adminId: currentUser?.uid || '',
+          tsin: safeString(product.tsin_id || product.offer_details?.tsin_id),
+          sku: safeString(product.sku),
+          title: safeString(product.product_title || product.title),
+          imageUrl: safeString(product.offer_details?.image_url),
+          status: safeString(product.offer_status || product.status || 'unavailable').toLowerCase(),
+          ourPrice: safeNumber(product.current_price || product.selling_price),
+          rrp: safeNumber(product.original_price || product.rrp),
+          createdAt: product.created_at ? new Date(product.created_at) : new Date(),
+          updatedAt: product.updated_at ? new Date(product.updated_at) : new Date(),
+          offerUrl: safeString(product.offer_details?.offer_url || product.offer_url),
+          plid: safeString(product.offer_id),
+          
+          // Stock information from enhanced data
+          stock: safeNumber(product.stock_quantity || product.stock),
+          stock_dbn: safeNumber(product.offer_details?.stock_dbn || product.stock_dbn),
+          stock_cpt: safeNumber(product.offer_details?.stock_cpt || product.stock_cpt),
+          stock_jhb: safeNumber(product.offer_details?.stock_jhb || product.stock_jhb),
+          
+          // Enhanced sales metrics from new tables
+          sold_30_days: safeNumber(product.sold_30_days || product.quantity_30_days),
+          total_sold: safeNumber(product.total_sold || product.total_quantity_sold),
+          sales_count: safeNumber(product.sales_count),
+          total_revenue: safeNumber(product.total_revenue),
+          avg_selling_price: safeNumber(product.avg_selling_price),
+          days_since_last_order: safeNumber(product.days_since_last_order),
+          
+          // Performance indicators
+          is_bestseller: product.is_bestseller || false,
+          is_slow_moving: product.is_slow_moving || false,
+          needs_restock: product.needs_restock || false,
+          
+          // Auto Price specific fields (initially empty)
+          scrapedRating: undefined,
+          scrapedReviewCount: undefined,
+          scrapedWinnerSeller: undefined,
+          scrapedWinnerSellerPrice: undefined,
+          scrapedTotalSellers: undefined,
+          lastScrapedAt: undefined,
+          scrapingStatus: 'idle' as const,
+          scrapingErrorMessage: undefined,
+          proxyUsed: undefined,
+          scrapingDuration: undefined,
+          
+          // Calculated fields (to be computed)
+          winDifference: undefined,
+          winPrice: undefined,
+          posBarcode: safeString(product.sku),
+          posPrice: undefined,
+          profitLoss: undefined,
+          minPrice: undefined,
+          maxPrice: undefined,
+          competitivenessScore: undefined,
+          pricePosition: undefined,
+          recommendedAction: undefined,
+        };
       });
+
+      setProducts(autoProducts);
+      console.log('Loaded enhanced auto-price products from new Neon tables:', autoProducts.length);
+      
+      // Log analytics if available
+      if (data.analytics) {
+        console.log('Auto-price analytics:', data.analytics);
+      }
+      if (data.salesAnalytics) {
+        console.log('Sales analytics for auto-pricing:', data.salesAnalytics.length, 'products with sales');
+      }
       
     } catch (error) {
-      console.error('Error loading auto price products:', error);
+      console.error('Error loading enhanced products from new Neon tables:', error);
+      setError(error instanceof Error ? error.message : 'Failed to load enhanced products');
       setProducts([]);
     } finally {
       setLoading(false);
     }
   };
 
-  const filteredProducts = () => {
-    let filtered = products.filter(product => {
-      // Search filter
-      if (searchTerm.trim()) {
-        const searchLower = searchTerm.toLowerCase();
-        const matches = (
-          product.title.toLowerCase().includes(searchLower) ||
-          product.sku.toLowerCase().includes(searchLower) ||
-          product.tsin.toLowerCase().includes(searchLower) ||
-          (product.scrapedWinnerSeller && product.scrapedWinnerSeller.toLowerCase().includes(searchLower))
-        );
-        if (!matches) return false;
-      }
-
-      // Status filter
-      if (statusFilter.length > 0 && !statusFilter.includes(product.scrapingStatus)) {
-        return false;
-      }
-
-      // Price filter
-      if (priceFilter.min && product.ourPrice < parseFloat(priceFilter.min)) return false;
-      if (priceFilter.max && product.ourPrice > parseFloat(priceFilter.max)) return false;
-
-      return true;
-    });
-
-    return filtered;
-  };
-
-  const triggerScraping = async (productId?: string) => {
-    try {
-      console.log('Triggering scraping for:', productId || 'all products');
-      // In real implementation, this would call the scraping API
-      
-      if (productId) {
-        setProducts(prev => prev.map(p => 
-          p.id === productId 
-            ? { ...p, scrapingStatus: 'queued' as const }
-            : p
-        ));
-      } else {
-        setProducts(prev => prev.map(p => ({ ...p, scrapingStatus: 'queued' as const })));
-      }
-      
-      // Simulate scraping completion after delay
-      setTimeout(() => {
-        if (productId) {
-          setProducts(prev => prev.map(p => 
-            p.id === productId 
-              ? { ...p, scrapingStatus: 'success' as const, lastScrapedAt: new Date() }
-              : p
-          ));
-        }
-      }, 3000);
-      
-    } catch (error) {
-      console.error('Error triggering scraping:', error);
-    }
-  };
-
-  const getStatusBadge = (status: string) => {
-    const variants = {
-      idle: 'bg-gray-100 text-gray-800',
-      queued: 'bg-yellow-100 text-yellow-800',
-      scraping: 'bg-blue-100 text-blue-800',
-      success: 'bg-green-100 text-green-800',
-      error: 'bg-red-100 text-red-800',
-      retry: 'bg-orange-100 text-orange-800',
-      skip: 'bg-gray-100 text-gray-600'
-    };
-    return variants[status as keyof typeof variants] || variants.idle;
-  };
-
-  const getPositionBadge = (position: string) => {
-    const variants = {
-      lowest: 'bg-green-100 text-green-800',
-      competitive: 'bg-blue-100 text-blue-800',
-      premium: 'bg-yellow-100 text-yellow-800',
-      overpriced: 'bg-red-100 text-red-800'
-    };
-    return variants[position as keyof typeof variants] || variants.competitive;
-  };
-
-  const getActionBadge = (action: string) => {
-    const variants = {
-      maintain: 'bg-green-100 text-green-800',
-      reduce: 'bg-red-100 text-red-800',
-      increase: 'bg-blue-100 text-blue-800',
-      investigate: 'bg-yellow-100 text-yellow-800'
-    };
-    return variants[action as keyof typeof variants] || variants.maintain;
-  };
-
-  const formatCurrency = (amount: number) => {
-    return `R${amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
-  };
-
-  const formatDateTime = (date: Date | undefined) => {
-    if (!date) return 'Never';
-    return new Date(date).toLocaleString();
-  };
-
   // Pagination
-  const filteredData = filteredProducts();
+  const filteredData = filteredProducts;
   const totalPages = Math.ceil(filteredData.length / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
   const currentProducts = filteredData.slice(startIndex, startIndex + itemsPerPage);
+
+  const handleStatusFilterChange = (status: string) => {
+    setTempStatusFilters(prev => 
+      prev.includes(status) 
+        ? prev.filter(s => s !== status)
+        : [...prev, status]
+    );
+  };
+
+  const applyFilters = () => {
+    setStatusFilters(tempStatusFilters);
+    setSearchTerm(tempSearchTerm);
+    setIsFilterDrawerOpen(false);
+  };
+
+  const openFilterDrawer = () => {
+    setTempStatusFilters([...statusFilters]); // Use spread to avoid reference issues
+    setTempSearchTerm(searchTerm);
+    setIsFilterDrawerOpen(true);
+  };
 
   if (loading) {
     return (
@@ -399,809 +355,405 @@ export default function TakealotAutoPricePage({ params }: { params: Promise<{ in
     );
   }
 
+  if (error) {
+    return (
+      <div className="p-6">
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+          <div className="flex items-center">
+            <div className="text-red-400 mr-3">⚠️</div>
+            <div>
+              <h3 className="text-sm font-medium text-red-800">Error Loading Products</h3>
+              <p className="text-sm text-red-700 mt-1">{error}</p>
+              <button 
+                onClick={loadProducts}
+                className="mt-2 text-sm bg-red-100 hover:bg-red-200 text-red-800 px-3 py-1 rounded"
+              >
+                Try Again
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="p-6 space-y-6">
-      {/* Header with Enhanced Actions */}
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Auto Price Management</h1>
-          <p className="text-gray-600 mt-1">Competitive pricing analysis and market intelligence</p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            onClick={() => triggerScraping()}
-            className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            <FiRefreshCw className="h-4 w-4 mr-2" />
-            Scrape All Prices
-          </button>
-          <button
-            onClick={() => {
-              // Export functionality
-              console.log('Export auto price data');
-            }}
-            className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-          >
-            <FiDownload className="h-4 w-4 mr-2" />
-            Export Data
-          </button>
-          <button
-            onClick={() => {
-              // Automation settings
-              console.log('Configure automation');
-            }}
-            className="flex items-center px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
-          >
-            <FiPlay className="h-4 w-4 mr-2" />
-            Automation
-          </button>
+    <div className="min-h-screen bg-gray-50">
+      {/* Full Width Header */}
+      <div className="bg-white shadow-sm border-b">
+        <div className="max-w-full px-6 py-4">
+          <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900">Auto Price Management</h1>
+              <p className="text-gray-600 mt-1">
+                Showing {filteredProducts.length} products • {products.length} total products loaded
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => window.open(`/admin/takealot/${integrationId}/auto-price/scrape-data`, '_blank')}
+                className="flex items-center px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors shadow-sm"
+              >
+                <FiSearch className="h-4 w-4 mr-2" />
+                Live Scrape Data
+              </button>
+              <button
+                onClick={() => window.open(`/admin/takealot/${integrationId}/auto-price/scrape-user-products`, '_blank')}
+                className="flex items-center px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors shadow-sm"
+              >
+                <FiPackage className="h-4 w-4 mr-2" />
+                Your Products Scraper
+              </button>
+              <button
+                onClick={openFilterDrawer}
+                className="flex items-center px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors shadow-sm"
+              >
+                <FiFilter className="h-4 w-4 mr-2" />
+                Filters {statusFilters.length > 0 && `(${statusFilters.length})`}
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* Enhanced Statistics Cards */}
-      {stats && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="bg-white p-6 rounded-lg shadow">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Total Products</p>
-                <p className="text-2xl font-bold text-gray-900">{stats.totalProducts}</p>
-                <p className="text-xs text-gray-500 mt-1">
-                  {stats.scrapedToday} scraped today
-                </p>
+      {/* Search and Controls Bar */}
+      <div className="bg-white border-b shadow-sm">
+        <div className="max-w-full px-6 py-4">
+          <div className="flex flex-col lg:flex-row lg:items-center gap-4">
+            {/* Search Bar */}
+            <div className="flex-1">
+              <div className="relative">
+                <FiSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-5 w-5" />
+                <input
+                  type="text"
+                  placeholder="Search products by name, SKU, or TSIN..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                />
+                {searchTerm && (
+                  <button
+                    onClick={() => setSearchTerm('')}
+                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  >
+                    ×
+                  </button>
+                )}
               </div>
-              <FiPackage className="h-8 w-8 text-blue-600" />
+            </div>
+
+            {/* Quick Actions */}
+            <div className="flex items-center space-x-3">
+              {statusFilters.length > 0 && (
+                <div className="flex items-center space-x-1">
+                  {statusFilters.map(filter => (
+                    <span key={filter} className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                      {filter}
+                      <button
+                        onClick={() => setStatusFilters(prev => prev.filter(f => f !== filter))}
+                        className="ml-2 text-blue-600 hover:text-blue-800"
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              
+              <select
+                value={itemsPerPage}
+                onChange={(e) => setItemsPerPage(Number(e.target.value))}
+                className="text-sm border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              >
+                <option value={10}>10 per page</option>
+                <option value={25}>25 per page</option>
+                <option value={50}>50 per page</option>
+                <option value={100}>100 per page</option>
+              </select>
             </div>
           </div>
-
-          <div className="bg-white p-6 rounded-lg shadow">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Competitive Position</p>
-                <p className="text-2xl font-bold text-green-600">{stats.competitiveProducts}</p>
-                <p className="text-xs text-gray-500 mt-1">
-                  {stats.overPricedProducts} overpriced
-                </p>
-              </div>
-              <FiTrendingUp className="h-8 w-8 text-green-600" />
-            </div>
-          </div>
-
-          <div className="bg-white p-6 rounded-lg shadow">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Avg Win Difference</p>
-                <p className="text-2xl font-bold text-purple-600">{formatCurrency(stats.averageWinDifference)}</p>
-                <p className="text-xs text-gray-500 mt-1">
-                  {formatCurrency(stats.potentialSavings)} potential savings
-                </p>
-              </div>
-              <FiDollarSign className="h-8 w-8 text-purple-600" />
-            </div>
-          </div>
-
-          <div className="bg-white p-6 rounded-lg shadow">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Scraping Health</p>
-                <p className="text-2xl font-bold text-orange-600">{stats.successRate24h}%</p>
-                <p className="text-xs text-gray-500 mt-1">
-                  {stats.pendingScraping} pending
-                </p>
-              </div>
-              <FiTrendingUp className="h-8 w-8 text-orange-600" />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Advanced Search and Filters */}
-      <div className="bg-white p-4 rounded-lg shadow space-y-4">
-        <div className="flex flex-col lg:flex-row gap-4">
-          {/* Search */}
-          <div className="flex-1">
-            <div className="relative">
-              <FiSearch className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Search by product title, SKU, TSIN, or seller..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10 pr-4 py-2 w-full border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              />
-            </div>
-          </div>
-          
-          {/* Items Per Page */}
-          <div className="flex space-x-2">
-            <select
-              value={itemsPerPage}
-              onChange={(e) => setItemsPerPage(Number(e.target.value))}
-              className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            >
-              <option value={25}>25 per page</option>
-              <option value={50}>50 per page</option>
-              <option value={100}>100 per page</option>
-            </select>
-          </div>
-        </div>
-
-        {/* Advanced Filters */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          {/* Status Filter */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
-            <select
-              value={statusFilter.length === 1 ? statusFilter[0] : ''}
-              onChange={(e) => setStatusFilter(e.target.value ? [e.target.value] : [])}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            >
-              <option value="">All Status</option>
-              <option value="buyable">Buyable</option>
-              <option value="loading">Loading</option>
-              <option value="out_of_stock">Out of Stock</option>
-              <option value="unavailable">Unavailable</option>
-            </select>
-          </div>
-
-          {/* Price Range Filter */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Min Price</label>
-            <input
-              type="number"
-              placeholder="0"
-              value={priceFilter.min}
-              onChange={(e) => setPriceFilter(prev => ({ ...prev, min: e.target.value }))}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Max Price</label>
-            <input
-              type="number"
-              placeholder="10000"
-              value={priceFilter.max}
-              onChange={(e) => setPriceFilter(prev => ({ ...prev, max: e.target.value }))}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            />
-          </div>
-
-          {/* Scraping Status Filter */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Scraping Status</label>
-            <select
-              value=""
-              onChange={(e) => {
-                // Add scraping status filter logic
-                console.log('Scraping filter:', e.target.value);
-              }}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            >
-              <option value="">All Scraping Status</option>
-              <option value="idle">Idle</option>
-              <option value="queued">Queued</option>
-              <option value="scraping">Scraping</option>
-              <option value="success">Success</option>
-              <option value="error">Error</option>
-            </select>
-          </div>
-        </div>
-
-        {/* Quick Filter Buttons */}
-        <div className="flex flex-wrap gap-2">
-          <button
-            onClick={() => {
-              setSearchTerm('');
-              setStatusFilter([]);
-              setPriceFilter({ min: '', max: '' });
-            }}
-            className="px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded-full hover:bg-gray-200"
-          >
-            Clear All
-          </button>
-          <button
-            onClick={() => setStatusFilter(['buyable'])}
-            className="px-3 py-1 text-sm bg-green-100 text-green-700 rounded-full hover:bg-green-200"
-          >
-            Buyable Only
-          </button>
-          <button
-            onClick={() => setStatusFilter(['out_of_stock'])}
-            className="px-3 py-1 text-sm bg-red-100 text-red-700 rounded-full hover:bg-red-200"
-          >
-            Out of Stock
-          </button>
-          <button
-            onClick={() => {
-              // Filter products that need price updates (have winner data but high difference)
-              // This would need to be implemented in the filter logic
-            }}
-            className="px-3 py-1 text-sm bg-yellow-100 text-yellow-700 rounded-full hover:bg-yellow-200"
-          >
-            Needs Price Update
-          </button>
-          <button
-            onClick={() => {
-              // Filter products with scraping errors
-              // This would need to be implemented in the filter logic
-            }}
-            className="px-3 py-1 text-sm bg-orange-100 text-orange-700 rounded-full hover:bg-orange-200"
-          >
-            Scraping Errors
-          </button>
         </div>
       </div>
 
-      {/* Products Table */}
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product</th>
-                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Our Price</th>
-                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">RRP</th>
-                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Stock</th>
-                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Sales</th>
-                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Winner</th>
-                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Difference</th>
-                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rating</th>
-                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Competition</th>
-                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Scraping</th>
-                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200">
-              {currentProducts.map((product) => (
-                <tr key={product.id} className="hover:bg-gray-50">
-                  {/* Product Column */}
-                  <td className="px-3 py-4">
-                    <div className="flex items-center">
-                      {product.imageUrl && (
-                        <img
-                          src={product.imageUrl}
-                          alt={product.title}
-                          className="h-10 w-10 rounded object-cover mr-3 flex-shrink-0"
-                        />
-                      )}
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium text-gray-900 max-w-xs truncate" title={product.title}>
-                          {product.title}
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          SKU: {product.sku}
-                        </div>
-                        <div className="text-xs text-gray-500">
-                          TSIN: {product.tsin}
-                        </div>
-                      </div>
-                    </div>
-                  </td>
-                  
-                  {/* Our Price Column */}
-                  <td className="px-3 py-4 text-sm text-gray-900 font-medium">
-                    {formatCurrency(product.ourPrice)}
-                    {product.posPrice && product.posPrice !== product.ourPrice && (
-                      <div className="text-xs text-gray-500">
-                        POS: {formatCurrency(product.posPrice)}
-                      </div>
-                    )}
-                  </td>
-                  
-                  {/* RRP Column */}
-                  <td className="px-3 py-4 text-sm text-gray-900">
-                    {formatCurrency(product.rrp)}
-                    {product.rrp > 0 && product.ourPrice > 0 && (
-                      <div className="text-xs text-gray-500">
-                        {Math.round(((product.rrp - product.ourPrice) / product.rrp) * 100)}% off
-                      </div>
-                    )}
-                  </td>
-                  
-                  {/* Stock Column */}
-                  <td className="px-3 py-4 text-sm">
-                    <div className={`font-medium ${(product.stock || 0) > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                      {product.stock || 0}
-                    </div>
-                    {/* Stock breakdown by warehouse */}
-                    {(product.stock_dbn || product.stock_cpt || product.stock_jhb) && (
-                      <div className="text-xs text-gray-500 space-y-1">
-                        {product.stock_dbn ? <div>DBN: {product.stock_dbn}</div> : null}
-                        {product.stock_cpt ? <div>CPT: {product.stock_cpt}</div> : null}
-                        {product.stock_jhb ? <div>JHB: {product.stock_jhb}</div> : null}
-                      </div>
-                    )}
-                  </td>
-                  
-                  {/* Sales Column */}
-                  <td className="px-3 py-4 text-sm text-gray-900">
-                    {product.sold_30_days ? (
-                      <div>
-                        <div className="font-medium text-green-600">{product.sold_30_days}</div>
-                        <div className="text-xs text-gray-500">30 days</div>
-                      </div>
-                    ) : (
-                      <span className="text-gray-400">-</span>
-                    )}
-                    {product.total_sold && (
-                      <div className="text-xs text-gray-500">
-                        Total: {product.total_sold}
-                      </div>
-                    )}
-                  </td>
-                  
-                  {/* Winner Column */}
-                  <td className="px-3 py-4 text-sm">
-                    {product.scrapedWinnerSellerPrice ? (
-                      <div>
-                        <div className="font-medium text-gray-900">
-                          {formatCurrency(product.scrapedWinnerSellerPrice)}
-                        </div>
-                        {product.scrapedWinnerSeller && (
-                          <div className="text-xs text-gray-500 max-w-24 truncate" title={product.scrapedWinnerSeller}>
-                            {product.scrapedWinnerSeller}
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <span className="text-gray-400">-</span>
-                    )}
-                  </td>
-                  
-                  {/* Difference Column */}
-                  <td className="px-3 py-4 text-sm">
-                    {product.winDifference !== undefined ? (
-                      <div>
-                        <span className={`font-medium ${product.winDifference > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                          {product.winDifference > 0 ? '+' : ''}{formatCurrency(product.winDifference)}
-                        </span>
-                        {product.pricePosition && (
-                          <div className="text-xs">
-                            <span className={`inline-flex px-1 py-0.5 rounded text-xs font-medium ${
-                              product.pricePosition === 'lowest' ? 'bg-green-100 text-green-800' :
-                              product.pricePosition === 'competitive' ? 'bg-yellow-100 text-yellow-800' :
-                              product.pricePosition === 'premium' ? 'bg-orange-100 text-orange-800' :
-                              'bg-red-100 text-red-800'
-                            }`}>
-                              {product.pricePosition}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <span className="text-gray-400">-</span>
-                    )}
-                  </td>
-                  
-                  {/* Rating Column */}
-                  <td className="px-3 py-4 text-sm">
-                    {product.scrapedRating ? (
-                      <div>
-                        <div className="flex items-center">
-                          <span className="text-yellow-500">★</span>
-                          <span className="ml-1 font-medium">{product.scrapedRating.toFixed(1)}</span>
-                        </div>
-                        {product.scrapedReviewCount && (
-                          <div className="text-xs text-gray-500">
-                            {product.scrapedReviewCount} reviews
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <span className="text-gray-400">-</span>
-                    )}
-                  </td>
-                  
-                  {/* Competition Column */}
-                  <td className="px-3 py-4 text-sm">
-                    {product.scrapedTotalSellers ? (
-                      <div>
-                        <div className="font-medium text-gray-900">
-                          {product.scrapedTotalSellers} sellers
-                        </div>
-                        {product.competitivenessScore && (
-                          <div className="text-xs text-gray-500">
-                            Score: {Math.round(product.competitivenessScore * 100)}%
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <span className="text-gray-400">-</span>
-                    )}
-                  </td>
-                  
-                  {/* Status Column */}
-                  <td className="px-3 py-4">
-                    <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${getStatusBadge(product.status)}`}>
-                      {product.status}
-                    </span>
-                    {product.recommendedAction && (
-                      <div className="text-xs text-gray-500 mt-1">
-                        {product.recommendedAction}
-                      </div>
-                    )}
-                  </td>
-                  
-                  {/* Scraping Status Column */}
-                  <td className="px-3 py-4 text-sm">
-                    <span className={`inline-flex px-2 py-1 text-xs font-medium rounded-full ${
-                      product.scrapingStatus === 'success' ? 'bg-green-100 text-green-800' :
-                      product.scrapingStatus === 'scraping' ? 'bg-blue-100 text-blue-800' :
-                      product.scrapingStatus === 'queued' ? 'bg-yellow-100 text-yellow-800' :
-                      product.scrapingStatus === 'error' ? 'bg-red-100 text-red-800' :
-                      'bg-gray-100 text-gray-800'
-                    }`}>
-                      {product.scrapingStatus}
-                    </span>
-                    {product.lastScrapedAt && (
-                      <div className="text-xs text-gray-500 mt-1">
-                        {new Date(product.lastScrapedAt).toLocaleDateString()}
-                      </div>
-                    )}
-                    {product.scrapingErrorMessage && (
-                      <div className="text-xs text-red-500 mt-1 max-w-32 truncate" title={product.scrapingErrorMessage}>
-                        {product.scrapingErrorMessage}
-                      </div>
-                    )}
-                  </td>
-                  
-                  {/* Actions Column */}
-                  <td className="px-3 py-4">
-                    <div className="flex space-x-2">
-                      <button
-                        onClick={() => triggerScraping(product.id)}
-                        disabled={product.scrapingStatus === 'scraping' || product.scrapingStatus === 'queued'}
-                        className="text-blue-600 hover:text-blue-800 disabled:text-gray-400"
-                        title="Scrape Price"
-                      >
-                        <FiRefreshCw className="h-4 w-4" />
-                      </button>
-                      <button
-                        onClick={() => {
-                          setSelectedProduct(product);
-                          setShowProductModal(true);
-                        }}
-                        className="text-gray-600 hover:text-gray-800"
-                        title="View Details"
-                      >
-                        <FiEye className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </td>
+      {/* Main Content Area */}
+      <div className="max-w-full px-6 py-6 space-y-6">
+        {/* Products Table */}
+        <div className="bg-white rounded-lg shadow overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-200 bg-gray-50">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-medium text-gray-900">
+                Products ({filteredProducts.length})
+              </h3>
+              <div className="text-sm text-gray-500">
+                {filteredProducts.length === 0 && searchTerm && 'No products match your search'}
+              </div>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Our Price</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">RRP</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Stock</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {currentProducts.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="px-4 py-12 text-center text-gray-500">
+                      <FiPackage className="h-12 w-12 mx-auto text-gray-300 mb-4" />
+                      <p className="text-lg font-medium text-gray-900 mb-2">No products found</p>
+                      <p className="text-sm">
+                        {searchTerm ? 'Try adjusting your search terms or filters.' : 'No buyable products available for this integration.'}
+                      </p>
+                    </td>
+                  </tr>
+                ) : (
+                  currentProducts.map((product) => (
+                    <tr key={product.id} className="hover:bg-gray-50 transition-colors">
+                      {/* Product Column */}
+                      <td className="px-4 py-4">
+                        <div className="flex items-center">
+                          {product.imageUrl && (
+                            <img
+                              src={product.imageUrl}
+                              alt={product.title}
+                              className="h-14 w-14 rounded-lg object-cover mr-4 flex-shrink-0 border shadow-sm"
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).style.display = 'none';
+                              }}
+                            />
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <div className="text-sm font-medium text-gray-900 max-w-xs truncate" title={product.title}>
+                              {product.title || 'No Title'}
+                            </div>
+                            <div className="text-xs text-gray-500 space-y-1 mt-1">
+                              <div className="flex items-center space-x-3">
+                                <span>SKU: {product.sku || 'N/A'}</span>
+                                <span>TSIN: {product.tsin || 'N/A'}</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+                      
+                      {/* Our Price Column */}
+                      <td className="px-4 py-4 text-sm">
+                        <div className="font-medium text-gray-900">
+                          {product.ourPrice > 0 ? formatCurrency(product.ourPrice) : (
+                            <span className="text-gray-400">No Price</span>
+                          )}
+                        </div>
+                        {product.posPrice && product.posPrice !== product.ourPrice && (
+                          <div className="text-xs text-gray-500">
+                            POS: {formatCurrency(product.posPrice)}
+                          </div>
+                        )}
+                      </td>
+                      
+                      {/* RRP Column */}
+                      <td className="px-4 py-4 text-sm text-gray-900">
+                        {product.rrp > 0 ? formatCurrency(product.rrp) : (
+                          <span className="text-gray-400">-</span>
+                        )}
+                      </td>
+                      
+                      {/* Stock Column */}
+                      <td className="px-4 py-4 text-sm">
+                        <div className={`text-gray-900 font-medium ${product.stock === 0 ? 'text-red-600' : ''}`}>
+                          {product.stock || 0}
+                        </div>
+                        {(product.stock_dbn || product.stock_cpt || product.stock_jhb) && (
+                          <div className="text-xs text-gray-500 space-y-1 mt-1">
+                            {product.stock_dbn && <div>DBN: {product.stock_dbn}</div>}
+                            {product.stock_cpt && <div>CPT: {product.stock_cpt}</div>}
+                            {product.stock_jhb && <div>JHB: {product.stock_jhb}</div>}
+                          </div>
+                        )}
+                      </td>
+                      
+                      {/* Status Column */}
+                      <td className="px-4 py-4">
+                        <span className={`inline-flex px-3 py-1 text-xs font-medium rounded-full ${getStatusBadge(product.status)}`}>
+                          {product.status}
+                        </span>
+                      </td>
+                      
+                      {/* Actions Column */}
+                      <td className="px-4 py-4 text-sm">
+                        <div className="flex items-center space-x-3">
+                          {/* Scrape Single Product Button */}
+                          <button
+                            onClick={() => scrapeSingleProduct(product)}
+                            disabled={scrapingProduct === product.id}
+                            className={`inline-flex items-center px-3 py-1 rounded text-xs font-medium transition-colors ${
+                              scrapingProduct === product.id
+                                ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                : 'bg-blue-100 text-blue-800 hover:bg-blue-200'
+                            }`}
+                          >
+                            {scrapingProduct === product.id ? (
+                              <>
+                                <div className="animate-spin rounded-full h-3 w-3 border-b border-blue-600 mr-1"></div>
+                                Scraping...
+                              </>
+                            ) : (
+                              <>
+                                <FiSearch className="h-3 w-3 mr-1" />
+                                Scrape
+                              </>
+                            )}
+                          </button>
+                          
+                          {/* View on Takealot Button */}
+                          {product.offerUrl && (
+                            <a
+                              href={product.offerUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center px-3 py-1 rounded text-xs font-medium bg-green-100 text-green-800 hover:bg-green-200 transition-colors"
+                            >
+                              <FiPackage className="h-3 w-3 mr-1" />
+                              View
+                            </a>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
 
         {/* Pagination */}
         {totalPages > 1 && (
-          <div className="bg-white px-4 py-3 flex items-center justify-between border-t border-gray-200">
-            <div className="flex-1 flex justify-between sm:hidden">
+          <div className="flex items-center justify-between bg-white px-6 py-4 rounded-lg shadow">
+            <div className="flex items-center space-x-2">
+              <span className="text-sm text-gray-700">
+                Showing {startIndex + 1} to {Math.min(startIndex + itemsPerPage, filteredData.length)} of {filteredData.length} results
+              </span>
+            </div>
+            <div className="flex items-center space-x-2">
               <button
                 onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
                 disabled={currentPage === 1}
-                className="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
+                className="px-4 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 Previous
               </button>
+              
+              <div className="flex items-center space-x-1">
+                {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                  const pageNum = i + 1;
+                  return (
+                    <button
+                      key={pageNum}
+                      onClick={() => setCurrentPage(pageNum)}
+                      className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+                        currentPage === pageNum
+                          ? 'text-blue-600 bg-blue-50 border border-blue-300'
+                          : 'text-gray-500 bg-white border border-gray-300 hover:bg-gray-50'
+                      }`}
+                    >
+                      {pageNum}
+                    </button>
+                  );
+                })}
+              </div>
+
               <button
                 onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
                 disabled={currentPage === totalPages}
-                className="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
+                className="px-4 py-2 text-sm font-medium text-gray-500 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 Next
               </button>
-            </div>
-            <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
-              <div>
-                <p className="text-sm text-gray-700">
-                  Showing <span className="font-medium">{startIndex + 1}</span> to{' '}
-                  <span className="font-medium">{Math.min(startIndex + itemsPerPage, filteredData.length)}</span> of{' '}
-                  <span className="font-medium">{filteredData.length}</span> results
-                </p>
-              </div>
-              <div>
-                <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px">
-                  <button
-                    onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
-                    disabled={currentPage === 1}
-                    className="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50"
-                  >
-                    Previous
-                  </button>
-                  <button
-                    onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
-                    disabled={currentPage === totalPages}
-                    className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50"
-                  >
-                    Next
-                  </button>
-                </nav>
-              </div>
             </div>
           </div>
         )}
       </div>
 
-      {/* Product Detail Modal */}
-      {showProductModal && selectedProduct && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b border-gray-200">
-              <div className="flex items-center justify-between">
-                <h2 className="text-xl font-semibold text-gray-900">Product Details</h2>
+      {/* Filter Drawer */}
+      {isFilterDrawerOpen && (
+        <div className="fixed inset-0 z-50 overflow-hidden">
+          <div className="absolute inset-0 overflow-hidden">
+            <div className="absolute inset-0 bg-gray-500 bg-opacity-75 transition-opacity" onClick={() => setIsFilterDrawerOpen(false)}></div>
+            <section className="absolute right-0 top-0 h-full w-full max-w-md flex flex-col bg-white shadow-xl">
+              <div className="flex items-center justify-between p-4 border-b">
+                <h2 className="text-lg font-medium text-gray-900">Filters</h2>
                 <button
-                  onClick={() => setShowProductModal(false)}
+                  onClick={() => setIsFilterDrawerOpen(false)}
                   className="text-gray-400 hover:text-gray-600"
                 >
-                  <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
+                  <span className="sr-only">Close</span>
+                  ×
                 </button>
               </div>
-            </div>
-            
-            <div className="p-6 space-y-6">
-              {/* Product Header */}
-              <div className="flex items-start space-x-4">
-                {selectedProduct.imageUrl && (
-                  <img
-                    src={selectedProduct.imageUrl}
-                    alt={selectedProduct.title}
-                    className="h-20 w-20 rounded object-cover flex-shrink-0"
+              
+              <div className="flex-1 overflow-y-auto p-4 space-y-6">
+                {/* Search Filter */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Search Products
+                  </label>
+                  <input
+                    type="text"
+                    value={tempSearchTerm}
+                    onChange={(e) => setTempSearchTerm(e.target.value)}
+                    placeholder="Search by title, SKU, or TSIN..."
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   />
-                )}
-                <div className="flex-1">
-                  <h3 className="text-lg font-medium text-gray-900">{selectedProduct.title}</h3>
-                  <div className="text-sm text-gray-500 space-y-1">
-                    <p>SKU: {selectedProduct.sku}</p>
-                    <p>TSIN: {selectedProduct.tsin}</p>
-                    {selectedProduct.posBarcode && <p>Barcode: {selectedProduct.posBarcode}</p>}
+                </div>
+
+                {/* Status Filter */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Status
+                  </label>
+                  <div className="space-y-2 max-h-40 overflow-y-auto">
+                    {uniqueStatuses.map((status) => (
+                      <label key={status} className="flex items-center">
+                        <input
+                          type="checkbox"
+                          checked={tempStatusFilters.includes(status)}
+                          onChange={() => handleStatusFilterChange(status)}
+                          className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                        />
+                        <span className="ml-2 text-sm text-gray-700">{status}</span>
+                      </label>
+                    ))}
                   </div>
                 </div>
               </div>
-
-              {/* Pricing Information */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="bg-gray-50 p-4 rounded-lg">
-                  <h4 className="font-medium text-gray-900 mb-2">Our Pricing</h4>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span>Current Price:</span>
-                      <span className="font-medium">{formatCurrency(selectedProduct.ourPrice)}</span>
-                    </div>
-                    {selectedProduct.posPrice && selectedProduct.posPrice !== selectedProduct.ourPrice && (
-                      <div className="flex justify-between">
-                        <span>POS Price:</span>
-                        <span className="font-medium">{formatCurrency(selectedProduct.posPrice)}</span>
-                      </div>
-                    )}
-                    <div className="flex justify-between">
-                      <span>RRP:</span>
-                      <span className="font-medium">{formatCurrency(selectedProduct.rrp)}</span>
-                    </div>
-                    {selectedProduct.minPrice && (
-                      <div className="flex justify-between">
-                        <span>Min Price:</span>
-                        <span className="font-medium">{formatCurrency(selectedProduct.minPrice)}</span>
-                      </div>
-                    )}
-                    {selectedProduct.maxPrice && (
-                      <div className="flex justify-between">
-                        <span>Max Price:</span>
-                        <span className="font-medium">{formatCurrency(selectedProduct.maxPrice)}</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div className="bg-gray-50 p-4 rounded-lg">
-                  <h4 className="font-medium text-gray-900 mb-2">Market Information</h4>
-                  <div className="space-y-2 text-sm">
-                    {selectedProduct.scrapedWinnerSellerPrice && (
-                      <div className="flex justify-between">
-                        <span>Winner Price:</span>
-                        <span className="font-medium">{formatCurrency(selectedProduct.scrapedWinnerSellerPrice)}</span>
-                      </div>
-                    )}
-                    {selectedProduct.scrapedWinnerSeller && (
-                      <div className="flex justify-between">
-                        <span>Winner Seller:</span>
-                        <span className="font-medium text-xs">{selectedProduct.scrapedWinnerSeller}</span>
-                      </div>
-                    )}
-                    {selectedProduct.winDifference !== undefined && (
-                      <div className="flex justify-between">
-                        <span>Price Difference:</span>
-                        <span className={`font-medium ${selectedProduct.winDifference > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                          {selectedProduct.winDifference > 0 ? '+' : ''}{formatCurrency(selectedProduct.winDifference)}
-                        </span>
-                      </div>
-                    )}
-                    {selectedProduct.scrapedTotalSellers && (
-                      <div className="flex justify-between">
-                        <span>Total Sellers:</span>
-                        <span className="font-medium">{selectedProduct.scrapedTotalSellers}</span>
-                      </div>
-                    )}
-                    {selectedProduct.pricePosition && (
-                      <div className="flex justify-between">
-                        <span>Position:</span>
-                        <span className={`font-medium capitalize ${
-                          selectedProduct.pricePosition === 'lowest' ? 'text-green-600' :
-                          selectedProduct.pricePosition === 'competitive' ? 'text-yellow-600' :
-                          selectedProduct.pricePosition === 'premium' ? 'text-orange-600' :
-                          'text-red-600'
-                        }`}>
-                          {selectedProduct.pricePosition}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <div className="bg-gray-50 p-4 rounded-lg">
-                  <h4 className="font-medium text-gray-900 mb-2">Business Metrics</h4>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span>Stock Level:</span>
-                      <span className={`font-medium ${(selectedProduct.stock || 0) > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                        {selectedProduct.stock || 0}
-                      </span>
-                    </div>
-                    {selectedProduct.sold_30_days && (
-                      <div className="flex justify-between">
-                        <span>Sold (30 days):</span>
-                        <span className="font-medium text-green-600">{selectedProduct.sold_30_days}</span>
-                      </div>
-                    )}
-                    {selectedProduct.total_sold && (
-                      <div className="flex justify-between">
-                        <span>Total Sold:</span>
-                        <span className="font-medium">{selectedProduct.total_sold}</span>
-                      </div>
-                    )}
-                    {selectedProduct.profitLoss !== undefined && (
-                      <div className="flex justify-between">
-                        <span>Profit/Loss:</span>
-                        <span className={`font-medium ${selectedProduct.profitLoss >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                          {formatCurrency(selectedProduct.profitLoss)}
-                        </span>
-                      </div>
-                    )}
-                    {selectedProduct.competitivenessScore && (
-                      <div className="flex justify-between">
-                        <span>Competitiveness:</span>
-                        <span className="font-medium">{Math.round(selectedProduct.competitivenessScore * 100)}%</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Stock Breakdown */}
-              {(selectedProduct.stock_dbn || selectedProduct.stock_cpt || selectedProduct.stock_jhb) && (
-                <div className="bg-gray-50 p-4 rounded-lg">
-                  <h4 className="font-medium text-gray-900 mb-2">Stock by Warehouse</h4>
-                  <div className="grid grid-cols-3 gap-4 text-sm">
-                    <div className="text-center">
-                      <div className="font-medium text-lg">{selectedProduct.stock_dbn || 0}</div>
-                      <div className="text-gray-500">Durban</div>
-                    </div>
-                    <div className="text-center">
-                      <div className="font-medium text-lg">{selectedProduct.stock_cpt || 0}</div>
-                      <div className="text-gray-500">Cape Town</div>
-                    </div>
-                    <div className="text-center">
-                      <div className="font-medium text-lg">{selectedProduct.stock_jhb || 0}</div>
-                      <div className="text-gray-500">Johannesburg</div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Rating and Reviews */}
-              {(selectedProduct.scrapedRating || selectedProduct.scrapedReviewCount) && (
-                <div className="bg-gray-50 p-4 rounded-lg">
-                  <h4 className="font-medium text-gray-900 mb-2">Customer Feedback</h4>
-                  <div className="flex items-center space-x-4">
-                    {selectedProduct.scrapedRating && (
-                      <div className="flex items-center">
-                        <span className="text-yellow-500 text-lg">★</span>
-                        <span className="ml-1 font-medium text-lg">{selectedProduct.scrapedRating.toFixed(1)}</span>
-                        <span className="text-gray-500 ml-1">/ 5</span>
-                      </div>
-                    )}
-                    {selectedProduct.scrapedReviewCount && (
-                      <div className="text-sm text-gray-600">
-                        {selectedProduct.scrapedReviewCount} reviews
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* Scraping Information */}
-              <div className="bg-gray-50 p-4 rounded-lg">
-                <h4 className="font-medium text-gray-900 mb-2">Scraping Status</h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                  <div className="space-y-2">
-                    <div className="flex justify-between">
-                      <span>Status:</span>
-                      <span className={`font-medium ${
-                        selectedProduct.scrapingStatus === 'success' ? 'text-green-600' :
-                        selectedProduct.scrapingStatus === 'error' ? 'text-red-600' :
-                        selectedProduct.scrapingStatus === 'scraping' ? 'text-blue-600' :
-                        'text-gray-600'
-                      }`}>
-                        {selectedProduct.scrapingStatus}
-                      </span>
-                    </div>
-                    {selectedProduct.lastScrapedAt && (
-                      <div className="flex justify-between">
-                        <span>Last Scraped:</span>
-                        <span className="font-medium">
-                          {new Date(selectedProduct.lastScrapedAt).toLocaleString()}
-                        </span>
-                      </div>
-                    )}
-                    {selectedProduct.scrapingDuration && (
-                      <div className="flex justify-between">
-                        <span>Duration:</span>
-                        <span className="font-medium">{selectedProduct.scrapingDuration}ms</span>
-                      </div>
-                    )}
-                  </div>
-                  <div className="space-y-2">
-                    {selectedProduct.proxyUsed && (
-                      <div className="flex justify-between">
-                        <span>Proxy Used:</span>
-                        <span className="font-medium text-xs">{selectedProduct.proxyUsed}</span>
-                      </div>
-                    )}
-                    {selectedProduct.scrapingErrorMessage && (
-                      <div>
-                        <div className="text-red-600 font-medium mb-1">Error Message:</div>
-                        <div className="text-xs text-red-600 bg-red-50 p-2 rounded">
-                          {selectedProduct.scrapingErrorMessage}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Recommended Actions */}
-              {selectedProduct.recommendedAction && (
-                <div className="bg-blue-50 p-4 rounded-lg">
-                  <h4 className="font-medium text-blue-900 mb-2">Recommended Action</h4>
-                  <p className="text-sm text-blue-800 capitalize">
-                    {selectedProduct.recommendedAction.replace('_', ' ')}
-                  </p>
-                </div>
-              )}
-
-              {/* Action Buttons */}
-              <div className="flex justify-end space-x-3 pt-4 border-t border-gray-200">
+              
+              <div className="border-t p-4 space-y-3">
                 <button
-                  onClick={() => triggerScraping(selectedProduct.id)}
-                  disabled={selectedProduct.scrapingStatus === 'scraping' || selectedProduct.scrapingStatus === 'queued'}
-                  className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                  onClick={applyFilters}
+                  className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 transition-colors"
                 >
-                  <FiRefreshCw className="h-4 w-4 mr-2" />
-                  Refresh Data
+                  Apply Filters
                 </button>
                 <button
-                  onClick={() => setShowProductModal(false)}
-                  className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+                  onClick={() => {
+                    setTempStatusFilters([]);
+                    setTempSearchTerm('');
+                    setStatusFilters(['buyable']); // Reset to default buyable filter
+                    setSearchTerm('');
+                    setIsFilterDrawerOpen(false);
+                  }}
+                  className="w-full bg-gray-300 text-gray-700 py-2 px-4 rounded-md hover:bg-gray-400 transition-colors"
                 >
-                  Close
+                  Reset to Buyable
                 </button>
               </div>
-            </div>
+            </section>
           </div>
         </div>
       )}

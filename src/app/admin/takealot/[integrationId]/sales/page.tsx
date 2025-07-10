@@ -4,8 +4,6 @@ import React, { useState, useEffect } from 'react';
 import { FiSearch, FiRefreshCw, FiDollarSign, FiCalendar, FiPackage, FiEye, FiX, FiTrendingUp, FiShoppingCart, FiUsers, FiFilter, FiDownload } from 'react-icons/fi';
 import { useAuth } from '@/context/AuthContext';
 import { usePageTitle } from '@/context/PageTitleContext';
-import { db } from '@/lib/firebase/firebase';
-import { collection, query, where, getDocs } from 'firebase/firestore';
 
 interface Sale {
   order_id: string;
@@ -21,6 +19,7 @@ interface Sale {
   customer_dc?: string;
   dc?: string;
   takealot_url_mol?: string;
+  offer_url?: string; // Add the correct product URL
   success_fee?: number;
   total_fee?: number;
   stock_transfer_fee?: number;
@@ -32,6 +31,7 @@ interface Product {
   sku: string;
   tsin_id?: string;
   image_url?: string;
+  offer_url?: string; // Add the correct product URL
   [key: string]: any;
 }
 
@@ -70,7 +70,7 @@ export default function TakealotSalesPage({ params }: { params: Promise<{ integr
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage, setItemsPerPage] = useState(100);
+  const [itemsPerPage, setItemsPerPage] = useState(20);
   const [products, setProducts] = useState<Product[]>([]);
   const [sortBy, setSortBy] = useState('order_date');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
@@ -97,58 +97,55 @@ export default function TakealotSalesPage({ params }: { params: Promise<{ integr
 
   const loadProducts = async () => {
     try {
-      console.log('Loading products for image mapping...');
+      console.log('Loading products for image mapping from new Neon tables...');
 
-      // Try takealot_offers first
-      const offersQuery = query(
-        collection(db, 'takealot_offers'),
-        where('integrationId', '==', integrationId)
-      );
+      // Call the paginated API route for better performance
+      const response = await fetch('/api/admin/takealot/get-sales-paginated', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          integrationId,
+          adminId: currentUser?.uid,
+          filters: {}
+        })
+      });
+
+      const data = await response.json();
       
-      const offersSnapshot = await getDocs(offersQuery);
-      
-      if (offersSnapshot.size > 0) {
-        const productData = offersSnapshot.docs.map(doc => {
-          const data = doc.data();
-          return {
-            sku: data.sku || data.offer_id,
-            tsin_id: data.tsin_id,
-            image_url: data.image_url_1 || data.image_url,
-            ...data
-          };
-        });
-        setProducts(productData);
-      } else {
-        // Try takealotProducts as fallback
-        const productsQuery = query(
-          collection(db, 'takealotProducts'),
-          where('integrationId', '==', integrationId)
-        );
-        
-        const productsSnapshot = await getDocs(productsQuery);
-        
-        const productData = productsSnapshot.docs.map(doc => {
-          const data = doc.data();
-          return {
-            sku: data.sku,
-            tsin_id: data.tsin_id,
-            image_url: data.image_url_1 || data.image_url,
-            ...data
-          };
-        });
-        setProducts(productData);
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Failed to fetch products');
       }
 
+      const productData = data.data.map((product: any) => {
+        return {
+          sku: product.sku || product.offer_id,
+          tsin_id: product.offer_details?.tsin_id || product.tsin_id,
+          image_url: product.offer_details?.image_url || product.image_url,
+          offer_url: product.offer_details?.offer_url || product.offer_url,
+          ...product
+        };
+      });
+      setProducts(productData);
+
     } catch (error) {
-      console.error('Error loading products:', error);
+      console.error('Error loading products from new Neon tables:', error);
     }
   };
 
   // Calculate analytics from sales data
   const calculateAnalytics = (salesData: Sale[]): SalesAnalytics => {
     const totalSales = salesData.length;
-    const totalRevenue = salesData.reduce((sum, sale) => sum + ((sale.selling_price || 0) * (sale.quantity || 0)), 0);
-    const totalQuantity = salesData.reduce((sum, sale) => sum + (sale.quantity || 0), 0);
+    const totalRevenue = salesData.reduce((sum, sale) => {
+      const price = typeof sale.selling_price === 'string' ? parseFloat(sale.selling_price) : sale.selling_price || 0;
+      const qty = typeof sale.quantity === 'string' ? parseInt(sale.quantity) : sale.quantity || 0;
+      return sum + (price * qty);
+    }, 0);
+    const totalQuantity = salesData.reduce((sum, sale) => {
+      const qty = typeof sale.quantity === 'string' ? parseInt(sale.quantity) : sale.quantity || 0;
+      return sum + qty;
+    }, 0);
     const averageOrderValue = totalSales > 0 ? totalRevenue / totalSales : 0;
 
     // Top products by sales count
@@ -159,7 +156,9 @@ export default function TakealotSalesPage({ params }: { params: Promise<{ integr
         productSales[key] = { count: 0, revenue: 0 };
       }
       productSales[key].count += 1;
-      productSales[key].revenue += (sale.selling_price || 0) * (sale.quantity || 0);
+      const price = typeof sale.selling_price === 'string' ? parseFloat(sale.selling_price) : sale.selling_price || 0;
+      const qty = typeof sale.quantity === 'string' ? parseInt(sale.quantity) : sale.quantity || 0;
+      productSales[key].revenue += price * qty;
     });
 
     const topProducts = Object.entries(productSales)
@@ -215,54 +214,89 @@ export default function TakealotSalesPage({ params }: { params: Promise<{ integr
     try {
       setLoading(true);
       
-      console.log('Loading sales for integration:', integrationId);
+      console.log('Loading sales from optimized Neon API for integration:', integrationId);
 
-      const salesQuery = query(
-        collection(db, 'takealot_sales'),
-        where('integrationId', '==', integrationId)
-      );
+      // Call the new paginated API route for better performance
+      const response = await fetch('/api/admin/takealot/get-sales-paginated', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          integrationId,
+          adminId: currentUser?.uid,
+          page: currentPage,
+          limit: itemsPerPage,
+          filters: {
+            search: searchTerm,
+            dateFrom: dateFilter.from,
+            dateTo: dateFilter.to,
+            status: statusFilter,
+            sortBy,
+            sortOrder
+          }
+        })
+      });
+
+      const data = await response.json();
       
-      const salesSnapshot = await getDocs(salesQuery);
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Failed to fetch sales');
+      }
+
+      console.log('Found sales in new Neon tables:', data.data.length);
       
-      if (salesSnapshot.size > 0) {
-        const salesData = salesSnapshot.docs.map(doc => {
-          const data = doc.data();
+      if (data.data.length > 0) {
+        const salesData = data.data.map((sale: any) => {
           return {
-            order_id: data.order_id || '',
-            order_item_id: data.order_item_id || '',
-            product_title: data.product_title || '',
-            customer_name: data.customer_name || '',
-            order_date: data.order_date || '',
-            selling_price: Number(data.selling_price) || 0,
-            quantity: Number(data.quantity) || 0,
-            status: data.status || '',
-            tsin_id: data.tsin_id || '',
-            sku: data.sku || '',
-            customer_dc: data.customer_dc || data.dc || '',
-            dc: data.customer_dc || data.dc || '',
-            takealot_url_mol: data.takealot_url_mol || '',
-            success_fee: data.success_fee || 0,
-            total_fee: data.total_fee || 0,
-            stock_transfer_fee: data.stock_transfer_fee || 0,
-            courier_collection_fee: data.courier_collection_fee || 0,
-            ...data
+            order_id: sale.order_id || '',
+            order_item_id: sale.order_item_id || '',
+            product_title: sale.product_title || '',
+            customer_name: sale.customer_name || '',
+            order_date: sale.order_date || '',
+            selling_price: parseFloat(sale.selling_price) || 0,
+            quantity: parseInt(sale.quantity) || 0,
+            status: sale.status || '',
+            tsin_id: sale.tsin_id || '',
+            sku: sale.sku || '',
+            customer_dc: sale.customer_dc || '',
+            dc: sale.customer_dc || '',
+            takealot_url_mol: sale.takealot_url_mol || '',
+            success_fee: parseFloat(sale.success_fee) || 0,
+            total_fee: parseFloat(sale.total_fee) || 0,
+            stock_transfer_fee: parseFloat(sale.stock_transfer_fee) || 0,
+            courier_collection_fee: parseFloat(sale.courier_collection_fee) || 0,
+            commission: parseFloat(sale.commission) || 0,
+            order_status: sale.order_status || '',
+            return_status: sale.return_status || '',
+            is_return: sale.is_return || false,
+            customer_city: sale.customer_city || '',
+            payment_method: sale.payment_method || '',
+            ...sale
           };
         });
         
-        const uniqueSales = salesData.filter((sale, index, self) => 
+        // Remove duplicates based on order_id
+        const uniqueSales = salesData.filter((sale: any, index: number, self: any[]) => 
           index === self.findIndex(s => s.order_id === sale.order_id)
         );
         
         setSales(uniqueSales);
         setAnalytics(calculateAnalytics(uniqueSales));
+        
+        // If the new API provides analytics, use those instead
+        if (data.analytics) {
+          console.log('Using analytics from new API:', data.analytics);
+          // You can enhance the analytics here if needed
+        }
       } else {
-        console.log('No sales data found in takealot_sales collection');
+        console.log('No sales data found in new Neon tables');
         setSales([]);
         setAnalytics(null);
       }
 
     } catch (error) {
-      console.error('Error loading sales:', error);
+      console.error('Error loading sales from new Neon tables:', error);
     } finally {
       setLoading(false);
     }
@@ -370,7 +404,7 @@ export default function TakealotSalesPage({ params }: { params: Promise<{ integr
   // Reset to page 1 when search changes
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, itemsPerPage]);
+  }, [searchTerm, itemsPerPage, dateFilter, statusFilter]);
 
   // Helper function to find product image by TSIN or SKU
   const getProductImage = (sale: Sale): string | undefined => {
@@ -388,10 +422,31 @@ export default function TakealotSalesPage({ params }: { params: Promise<{ integr
   };
   // Helper function to open product on Takealot
   const openProductOnTakealot = (sale: Sale) => {
+    // First try to get the offer_url from the matched product
+    let productUrl = null;
+    
     if (sale.tsin_id) {
-      window.open(`https://www.takealot.com/p/${sale.tsin_id}`, '_blank');
+      const product = products.find(p => p.tsin_id === sale.tsin_id);
+      if (product?.offer_url) {
+        productUrl = product.offer_url;
+      }
+    }
+    
+    if (!productUrl && sale.sku) {
+      const product = products.find(p => p.sku === sale.sku);
+      if (product?.offer_url) {
+        productUrl = product.offer_url;
+      }
+    }
+    
+    // Use the product URL if found, otherwise fallback to generic TSIN URL
+    if (productUrl) {
+      window.open(productUrl, '_blank', 'noopener,noreferrer');
+    } else if (sale.tsin_id) {
+      window.open(`https://www.takealot.com/p/${sale.tsin_id}`, '_blank', 'noopener,noreferrer');
     } else {
-      console.log('No TSIN available for sale:', sale.order_id);
+      console.log('No TSIN or product URL available for sale:', sale.order_id);
+      alert('Product URL not available');
     }
   };
 
@@ -410,12 +465,16 @@ export default function TakealotSalesPage({ params }: { params: Promise<{ integr
     }
   };
 
-  const formatPrice = (price: number) => {
-    return `R${price.toFixed(2)}`;
+  const formatPrice = (price: number | string) => {
+    const numPrice = typeof price === 'string' ? parseFloat(price) : price;
+    if (isNaN(numPrice)) return 'R0.00';
+    return `R${numPrice.toFixed(2)}`;
   };
-  const totalSalesValue = currentSales.reduce((total, sale) => 
-    total + (sale.selling_price * sale.quantity), 0
-  );
+  const totalSalesValue = currentSales.reduce((total, sale) => {
+    const price = typeof sale.selling_price === 'string' ? parseFloat(sale.selling_price) : sale.selling_price || 0;
+    const qty = typeof sale.quantity === 'string' ? parseInt(sale.quantity) : sale.quantity || 0;
+    return total + (price * qty);
+  }, 0);
 
   // Export sales data
   const exportSalesData = () => {
@@ -456,26 +515,42 @@ export default function TakealotSalesPage({ params }: { params: Promise<{ integr
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Takealot Sales</h1>
-          <p className="text-gray-600 mt-1">Monitor your sales performance and revenue analytics</p>
-        </div>
-        <div className="flex space-x-2">
-          <button
-            onClick={exportSalesData}
-            className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-          >
-            <FiDownload className="h-4 w-4 mr-2" />
-            Export CSV
-          </button>
-          <button
-            onClick={loadSales}
-            className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            <FiRefreshCw className="h-4 w-4 mr-2" />
-            Refresh
-          </button>
+      <div className="bg-white p-6 rounded-lg shadow-sm">
+        <div className="flex justify-between items-center">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Takealot Sales</h1>
+            <div className="flex items-center space-x-4">
+              <p className="text-gray-600">
+                {filteredSales.length} sales found
+                {filteredSales.length !== sales.length && (
+                  <span className="text-sm text-blue-600 ml-1">
+                    (filtered from {sales.length} total)
+                  </span>
+                )}
+                {totalPages > 1 && (
+                  <span className="text-sm text-gray-500 ml-1">
+                    • Page {currentPage} of {totalPages}
+                  </span>
+                )}
+              </p>
+            </div>
+          </div>
+          <div className="flex space-x-2">
+            <button
+              onClick={exportSalesData}
+              className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+            >
+              <FiDownload className="h-4 w-4 mr-2" />
+              Export CSV
+            </button>
+            <button
+              onClick={loadSales}
+              className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              <FiRefreshCw className="h-4 w-4 mr-2" />
+              Refresh
+            </button>
+          </div>
         </div>
       </div>
 
@@ -526,27 +601,39 @@ export default function TakealotSalesPage({ params }: { params: Promise<{ integr
 
       {/* Filters and Search */}
       <div className="bg-white p-4 rounded-lg shadow">
-        <div className="flex flex-col md:flex-row gap-4">
-          <div className="flex-1">
-            <div className="relative">
-              <FiSearch className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Search by product title, order ID, customer name, SKU, or TSIN..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10 pr-4 py-2 w-full border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              />
-            </div>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div className="relative flex-1 max-w-md">
+            <FiSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Search by product title, order ID, customer name, SKU, or TSIN..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+            />
           </div>
           
-          <button
-            onClick={() => setShowFilters(!showFilters)}
-            className="flex items-center px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-          >
-            <FiFilter className="h-4 w-4 mr-2" />
-            Filters
-          </button>
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-gray-700">Show:</span>
+            <select
+              value={itemsPerPage}
+              onChange={(e) => setItemsPerPage(Number(e.target.value))}
+              className="border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value={20}>20 (default)</option>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+            </select>
+            <span className="text-sm text-gray-700">per page</span>
+            
+            <button
+              onClick={() => setShowFilters(!showFilters)}
+              className="flex items-center px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+            >
+              <FiFilter className="h-4 w-4 mr-2" />
+              Filters
+            </button>
+          </div>
         </div>
 
         {showFilters && (
@@ -709,7 +796,9 @@ export default function TakealotSalesPage({ params }: { params: Promise<{ integr
               </thead>              <tbody className="divide-y divide-gray-200">
                 {currentSales.map((sale, index) => {
                   const productImage = getProductImage(sale);
-                  const grossSale = (sale.selling_price || 0) * (sale.quantity || 0);
+                  const price = typeof sale.selling_price === 'string' ? parseFloat(sale.selling_price) : sale.selling_price || 0;
+                  const qty = typeof sale.quantity === 'string' ? parseInt(sale.quantity) : sale.quantity || 0;
+                  const grossSale = price * qty;
                   
                   return (
                     <tr key={`${sale.order_id}-${sale.order_item_id || index}`} className="hover:bg-gray-50">
@@ -829,32 +918,59 @@ export default function TakealotSalesPage({ params }: { params: Promise<{ integr
               </tbody>
             </table>
           </div>          
-          {/* Pagination */}
+          {/* Enhanced Pagination */}
           {totalPages > 1 && (
-            <div className="px-6 py-4 border-t border-gray-200 bg-gray-50 flex items-center justify-between">
-              <div className="flex items-center text-sm text-gray-700">
-                <span>
-                  Showing {startIndex + 1} to {Math.min(endIndex, filteredSales.length)} of {filteredSales.length} sales
-                </span>
-              </div>
-              <div className="flex items-center space-x-2">
-                <button
-                  onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
-                  disabled={currentPage === 1}
-                  className="px-3 py-1 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Previous
-                </button>
-                <span className="px-3 py-1 text-sm font-medium text-gray-700">
-                  Page {currentPage} of {totalPages}
-                </span>
-                <button
-                  onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
-                  disabled={currentPage === totalPages}
-                  className="px-3 py-1 text-sm font-medium text-white bg-blue-600 border border-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Next
-                </button>
+            <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                {/* Results Summary */}
+                <div className="flex items-center text-sm text-gray-700">
+                  <span>
+                    Showing <span className="font-medium">{startIndex + 1}</span> to <span className="font-medium">{Math.min(endIndex, filteredSales.length)}</span> of <span className="font-medium">{filteredSales.length}</span> sales
+                    <span className="text-gray-500 ml-1">({itemsPerPage} per page)</span>
+                  </span>
+                </div>
+                
+                {/* Pagination Controls */}
+                <div className="flex items-center space-x-1">
+                  <button
+                    onClick={() => setCurrentPage(1)}
+                    disabled={currentPage === 1}
+                    className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-l-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    title="First page"
+                  >
+                    First
+                  </button>
+                  <button
+                    onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                    disabled={currentPage === 1}
+                    className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border-t border-b border-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    title="Previous page"
+                  >
+                    Previous
+                  </button>
+                  
+                  {/* Page Numbers */}
+                  <div className="flex items-center px-4 py-2 text-sm font-medium text-gray-700 bg-blue-50 border-t border-b border-blue-200">
+                    Page <span className="mx-1 font-bold text-blue-600">{currentPage}</span> of <span className="ml-1 font-bold">{totalPages}</span>
+                  </div>
+                  
+                  <button
+                    onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+                    disabled={currentPage === totalPages}
+                    className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border-t border-b border-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    title="Next page"
+                  >
+                    Next
+                  </button>
+                  <button
+                    onClick={() => setCurrentPage(totalPages)}
+                    disabled={currentPage === totalPages}
+                    className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-r-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    title="Last page"
+                  >
+                    Last
+                  </button>
+                </div>
               </div>
             </div>
           )}        </div>

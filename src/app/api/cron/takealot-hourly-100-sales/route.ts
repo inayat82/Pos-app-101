@@ -2,6 +2,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { SalesSyncService } from '@/lib/salesSyncService';
+import { EnhancedSyncService } from '@/lib/enhancedSyncService';
 import { cronJobLogger } from '@/lib/cronJobLogger';
 import { dbAdmin as db } from '@/lib/firebase/firebaseAdmin';
 import { ChangeDetectionService } from '@/lib/changeDetectionService';
@@ -66,9 +67,10 @@ export async function GET(request: NextRequest) {
 
         console.log(`[HourlySales100Cron] Processing optimized Last 100 sales for integration ${integrationId}`);
 
-        // Use the enhanced sales sync service with cost optimization
-        const syncService = new SalesSyncService(integrationId);
-        const result = await syncService.syncSalesWithOptimization(apiKey, 'Last 100', 'cron', adminId);
+        // Use the enhanced sales sync service with dual-write
+        const accountName = integrationData?.accountName || 'Takealot';
+        const enhancedSyncService = new EnhancedSyncService(adminId, integrationId, accountName);
+        const result = await enhancedSyncService.syncSales(apiKey, 'Last 100', 'cron');
         
         // Get cost savings statistics
         const costSavings = await ChangeDetectionService.getCostSavingsStats(integrationId, 1); // Last 24 hours
@@ -76,12 +78,14 @@ export async function GET(request: NextRequest) {
         results.push({
           integrationId,
           adminId,
-          success: true,
-          itemsProcessed: result.totalProcessed,
-          newRecords: result.totalNew,
-          updatedRecords: result.totalUpdated,
-          errors: result.totalErrors,
-          skipped: result.totalSkipped,
+          success: result.success,
+          itemsProcessed: result.totalRecords,
+          neonRecords: result.neonRecords,
+          firebaseRecords: result.firebaseRecords,
+          strategy: result.strategy,
+          timeTaken: result.timeTaken,
+          errors: result.errors,
+          warnings: result.warnings,
           // Add cost optimization metrics
           optimizationStats: {
             apiCallsSaved: costSavings.totalApiCallsSaved,
@@ -90,7 +94,7 @@ export async function GET(request: NextRequest) {
           }
         });
 
-        totalItemsProcessed += result.totalProcessed;
+        totalItemsProcessed += result.totalRecords;
 
       } catch (integrationError: any) {
         console.error(`[HourlySales100Cron] Error processing integration ${integrationId}:`, integrationError);

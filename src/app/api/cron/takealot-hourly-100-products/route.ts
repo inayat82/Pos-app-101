@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { dbAdmin as db } from '@/lib/firebase/firebaseAdmin';
 import { ProductSyncService } from '@/lib/productSyncService';
+import { EnhancedSyncService } from '@/lib/enhancedSyncService';
 import { ChangeDetectionService } from '@/lib/changeDetectionService';
 
 export async function GET(request: NextRequest) {
@@ -59,13 +60,13 @@ export async function GET(request: NextRequest) {
 
         console.log(`Processing optimized hourly 100 products sync for integration: ${integrationId}`);
         
-        // Initialize the Product Sync Service and perform optimized sync
-        const productSyncService = new ProductSyncService(integrationId);
-        const syncResult = await productSyncService.syncProductsWithOptimization(
+        // Initialize the Enhanced Sync Service for dual-write functionality
+        const accountName = integrationData?.accountName || 'Takealot';
+        const enhancedSyncService = new EnhancedSyncService(adminId, integrationId, accountName);
+        const syncResult = await enhancedSyncService.syncProducts(
           apiKey,
           'Fetch 100 Products',
-          'cron',
-          adminId
+          'cron'
         );
 
         // Get cost savings statistics
@@ -74,8 +75,16 @@ export async function GET(request: NextRequest) {
         results.push({
           integrationId,
           adminId,
-          success: true,
-          result: syncResult,
+          success: syncResult.success,
+          result: {
+            totalProcessed: syncResult.totalRecords,
+            neonRecords: syncResult.neonRecords,
+            firebaseRecords: syncResult.firebaseRecords,
+            strategy: syncResult.strategy,
+            timeTaken: syncResult.timeTaken,
+            errors: syncResult.errors,
+            warnings: syncResult.warnings
+          },
           optimizationStats: {
             apiCallsSaved: costSavings.totalApiCallsSaved,
             recordsSkipped: costSavings.totalRecordsNotProcessed,
@@ -83,7 +92,7 @@ export async function GET(request: NextRequest) {
           }
         });
 
-        console.log(`Completed optimized hourly 100 products sync for ${integrationId}:`, {
+        console.log(`Completed enhanced hourly 100 products sync with dual-write for ${integrationId}:`, {
           ...syncResult,
           costSavings
         });

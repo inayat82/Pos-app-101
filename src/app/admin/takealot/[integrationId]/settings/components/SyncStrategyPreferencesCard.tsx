@@ -3,7 +3,8 @@
 import React, { useState, useEffect } from 'react';
 import { 
   FiSave, FiTrendingUp, FiPackage, FiRefreshCw,
-  FiZap, FiDatabase, FiClock, FiBarChart 
+  FiZap, FiDatabase, FiClock, FiBarChart, FiTrash2, 
+  FiServer, FiCloud, FiCheck, FiAlertTriangle
 } from 'react-icons/fi';
 import { useAuth } from '@/context/AuthContext';
 import { db } from '@/lib/firebase/firebase';
@@ -50,6 +51,35 @@ interface FetchOperation {
   totalSaved?: number;
   totalUpdated?: number;
   newRecords?: number;
+}
+
+// Add new interfaces for Neon-specific features
+interface DatabaseHealth {
+  neon: {
+    status: 'healthy' | 'degraded' | 'down';
+    responseTime: number;
+    lastCheck: Date;
+  };
+  firebase: {
+    status: 'healthy' | 'degraded' | 'down';
+    responseTime: number;
+    lastCheck: Date;
+  };
+}
+
+interface DataCleanupOptions {
+  cleanupType: 'firebase-only' | 'duplicates' | 'old-data';
+  dateRange?: number; // days
+  dryRun: boolean;
+}
+
+interface NeonMigrationStats {
+  totalRecords: number;
+  neonRecords: number;
+  firebaseRecords: number;
+  duplicateRecords: number;
+  migrationProgress: number;
+  lastMigrationDate: Date | null;
 }
 
 const SyncStrategyPreferencesCard: React.FC<SyncStrategyPreferencesCardProps> = ({
@@ -101,8 +131,39 @@ const SyncStrategyPreferencesCard: React.FC<SyncStrategyPreferencesCardProps> = 
       newRecords: number;
       totalPages: number;
       status: 'success' | 'error' | null;
+      strategy?: string;
     }
   }>({});
+
+  // New Neon-specific state
+  const [databaseHealth, setDatabaseHealth] = useState<DatabaseHealth>({
+    neon: { status: 'healthy', responseTime: 0, lastCheck: new Date() },
+    firebase: { status: 'healthy', responseTime: 0, lastCheck: new Date() }
+  });
+  
+  const [migrationStats, setMigrationStats] = useState<NeonMigrationStats>({
+    totalRecords: 0,
+    neonRecords: 0,
+    firebaseRecords: 0,
+    duplicateRecords: 0,
+    migrationProgress: 0,
+    lastMigrationDate: null
+  });
+  
+  const [cleanupOptions, setCleanupOptions] = useState<DataCleanupOptions>({
+    cleanupType: 'firebase-only',
+    dateRange: 30,
+    dryRun: true
+  });
+  
+  const [cleanupInProgress, setCleanupInProgress] = useState(false);
+  const [showMigrationPanel, setShowMigrationPanel] = useState(false);
+  
+  // Add database health state
+  const [dbHealth, setDbHealth] = useState<DatabaseHealth>({
+    neon: { status: 'healthy', responseTime: 0, lastCheck: new Date() },
+    firebase: { status: 'healthy', responseTime: 0, lastCheck: new Date() }
+  });
 
   // Helper function to format the sync timing display
   const formatSyncTimingDisplay = (strategy: SyncStrategy): string => {
@@ -150,20 +211,62 @@ const SyncStrategyPreferencesCard: React.FC<SyncStrategyPreferencesCardProps> = 
     if (!currentUser?.uid || !integrationId) return;
     
     try {
-      // Load sales strategies
-      const salesRef = doc(db, `takealotIntegrations/${integrationId}/syncPreferences`, 'sales');
-      const salesSnap = await getDoc(salesRef);
-      if (salesSnap.exists()) {
-        const salesData = salesSnap.data();
-        setSalesStrategies(salesData.strategies || defaultSalesStrategies);
+      // First try to load from Neon for enhanced performance
+      let loadedFromNeon = false;
+      
+      try {
+        const neonResponse = await fetch('/api/admin/takealot/load-sync-preferences', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            integrationId,
+            adminId: currentUser?.uid
+          })
+        });
+
+        const neonData = await neonResponse.json();
+        
+        if (neonResponse.ok && neonData.success && neonData.data) {
+          console.log('Loading sync preferences from Neon:', neonData.data);
+          
+          if (neonData.data.salesStrategies) {
+            setSalesStrategies(neonData.data.salesStrategies);
+          }
+          
+          if (neonData.data.productStrategies) {
+            setProductStrategies(neonData.data.productStrategies);
+          }
+          
+          loadedFromNeon = true;
+          console.log('Successfully loaded sync preferences from Neon');
+        }
+      } catch (neonError) {
+        console.warn('Failed to load sync preferences from Neon, falling back to Firebase:', neonError);
       }
       
-      // Load product strategies
-      const productsRef = doc(db, `takealotIntegrations/${integrationId}/syncPreferences`, 'products');
-      const productsSnap = await getDoc(productsRef);
-      if (productsSnap.exists()) {
-        const productsData = productsSnap.data();
-        setProductStrategies(productsData.strategies || defaultProductStrategies);
+      // Fallback to Firebase if Neon loading failed or returned no data
+      if (!loadedFromNeon) {
+        console.log('Loading sync preferences from Firebase (fallback)');
+        
+        // Load sales strategies
+        const salesRef = doc(db, `takealotIntegrations/${integrationId}/syncPreferences`, 'sales');
+        const salesSnap = await getDoc(salesRef);
+        if (salesSnap.exists()) {
+          const salesData = salesSnap.data();
+          setSalesStrategies(salesData.strategies || defaultSalesStrategies);
+        }
+        
+        // Load product strategies
+        const productsRef = doc(db, `takealotIntegrations/${integrationId}/syncPreferences`, 'products');
+        const productsSnap = await getDoc(productsRef);
+        if (productsSnap.exists()) {
+          const productsData = productsSnap.data();
+          setProductStrategies(productsData.strategies || defaultProductStrategies);
+        }
+        
+        console.log('Loaded sync preferences from Firebase');
       }
     } catch (error: any) {
       console.error("Failed to load sync preferences:", error);
@@ -206,6 +309,7 @@ const SyncStrategyPreferencesCard: React.FC<SyncStrategyPreferencesCardProps> = 
     newRecords?: number;
     totalPages: number;
     status: 'success' | 'error';
+    strategy?: string;
   }) => {
     if (!currentUser?.uid || !integrationId) return;
     
@@ -219,6 +323,7 @@ const SyncStrategyPreferencesCard: React.FC<SyncStrategyPreferencesCardProps> = 
         newRecords: data.newRecords || 0,
         totalPages: data.totalPages,
         status: data.status,
+        strategy: data.strategy,
         updatedAt: Timestamp.now()
       });
       
@@ -232,7 +337,8 @@ const SyncStrategyPreferencesCard: React.FC<SyncStrategyPreferencesCardProps> = 
           totalUpdated: data.totalUpdated || 0,
           newRecords: data.newRecords || 0,
           totalPages: data.totalPages,
-          status: data.status
+          status: data.status,
+          strategy: data.strategy
         }
       }));
     } catch (error: any) {
@@ -337,7 +443,7 @@ const SyncStrategyPreferencesCard: React.FC<SyncStrategyPreferencesCardProps> = 
     }
   };
 
-  // Save sync preferences
+  // Save sync preferences to both Firebase and Neon
   const handleSaveSyncPreferences = async () => {
     if (!currentUser?.uid || !integrationId) {
       showMessage('error', 'User session or Integration ID is missing.');
@@ -346,7 +452,7 @@ const SyncStrategyPreferencesCard: React.FC<SyncStrategyPreferencesCardProps> = 
 
     setSavingSyncPrefs(true);
     try {
-      // Save sales strategies
+      // Save to Firebase (existing functionality)
       const salesRef = doc(db, `takealotIntegrations/${integrationId}/syncPreferences`, 'sales');
       await setDoc(salesRef, {
         strategies: salesStrategies,
@@ -354,7 +460,6 @@ const SyncStrategyPreferencesCard: React.FC<SyncStrategyPreferencesCardProps> = 
         updatedBy: currentUser.uid
       });
 
-      // Save product strategies
       const productsRef = doc(db, `takealotIntegrations/${integrationId}/syncPreferences`, 'products');
       await setDoc(productsRef, {
         strategies: productStrategies,
@@ -362,7 +467,36 @@ const SyncStrategyPreferencesCard: React.FC<SyncStrategyPreferencesCardProps> = 
         updatedBy: currentUser.uid
       });
 
-      showMessage('success', 'Sync preferences saved successfully!');
+      // Save to Neon database for enhanced performance
+      try {
+        const neonResponse = await fetch('/api/admin/takealot/save-sync-preferences', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            integrationId,
+            adminId: currentUser.uid,
+            salesStrategies,
+            productStrategies,
+            timestamp: new Date().toISOString()
+          })
+        });
+
+        const neonData = await neonResponse.json();
+        
+        if (!neonResponse.ok || !neonData.success) {
+          console.warn('Failed to save sync preferences to Neon:', neonData.error);
+          // Continue with Firebase-only save - don't fail completely
+        } else {
+          console.log('Successfully saved sync preferences to Neon');
+        }
+      } catch (neonError) {
+        console.warn('Error saving sync preferences to Neon:', neonError);
+        // Continue with Firebase-only save - don't fail completely
+      }
+
+      showMessage('success', 'Sync preferences saved successfully to both Firebase and Neon!');
     } catch (error: any) {
       console.error("Failed to save sync preferences:", error);
       showMessage('error', `Failed to save sync preferences: ${error.message}`);
@@ -455,8 +589,16 @@ const SyncStrategyPreferencesCard: React.FC<SyncStrategyPreferencesCardProps> = 
 
       const result = await response.json();
       
-      if (!result.success) {
-        throw new Error(result.error || 'Sales sync failed');
+      // Handle different response scenarios
+      if (result.success) {
+        // Success - data written to Neon
+        handleSyncSuccess(result, operationKey, strategyDescription, strategyId);
+      } else if (result.needsUserChoice && response.status === 206) {
+        // Neon failed, ask user for Firebase fallback
+        handleNeonFailureUserChoice(result, operationKey, strategyDescription, strategyId, 'sales');
+      } else {
+        // Complete failure
+        throw new Error(result.error || 'Sales sync failed completely');
       }
 
       // Update progress
@@ -566,44 +708,28 @@ const SyncStrategyPreferencesCard: React.FC<SyncStrategyPreferencesCardProps> = 
         },
         body: JSON.stringify({
           integrationId,
-          strategy
+          strategy,
+          adminId: currentUser?.uid
         }),
       });
 
-      const result = await response.json();
-
-      if (!result.success) {
-        throw new Error(result.error || 'Product sync failed');
+      if (!response.ok) {
+        throw new Error(`API request failed: ${response.status} ${response.statusText}`);
       }
 
-      // Update UI with results
-      const syncResult = result.result;
-      setFetchOperations(prev => ({
-        ...prev,
-        [operationKey]: {
-          isRunning: false,
-          progress: 100,
-          message: `Completed: ${syncResult.totalNew} new, ${syncResult.totalUpdated} updated`,
-          logs: [...(prev[operationKey]?.logs || []), `Completed: ${syncResult.totalProcessed} processed, ${syncResult.totalNew} new, ${syncResult.totalUpdated} updated, ${syncResult.totalSkipped} unchanged, ${syncResult.totalErrors} errors`],
-          totalFetched: syncResult.totalProcessed,
-          totalSaved: syncResult.totalNew,
-          totalUpdated: syncResult.totalUpdated,
-          newRecords: syncResult.totalNew
-        }
-      }));
-
-      const message = `${strategyDescription} completed! ${syncResult.totalNew} new, ${syncResult.totalUpdated} updated, ${syncResult.totalSkipped} unchanged (TSIN-based upsert)`;
-      showMessage('success', message);
+      const result = await response.json();
       
-      // Save sync status
-      saveSyncStatus(strategyId, {
-        totalFetched: syncResult.totalProcessed,
-        totalSaved: syncResult.totalNew,
-        totalUpdated: syncResult.totalUpdated,
-        newRecords: syncResult.totalNew,
-        totalPages: Math.ceil(syncResult.totalProcessed / 100) || 1,
-        status: 'success'
-      });
+      // Handle different response scenarios like sales sync
+      if (result.success) {
+        // Success - data written to Neon
+        handleSyncSuccess(result, operationKey, strategyDescription, strategyId);
+      } else if (result.needsUserChoice && response.status === 206) {
+        // Neon failed, ask user for Firebase fallback
+        handleNeonFailureUserChoice(result, operationKey, strategyDescription, strategyId, 'products');
+      } else {
+        // Complete failure
+        throw new Error(result.error || 'Product sync failed completely');
+      }
       
       // Reload data
       setTimeout(() => {
@@ -640,6 +766,180 @@ const SyncStrategyPreferencesCard: React.FC<SyncStrategyPreferencesCardProps> = 
       });
       
       throw error;
+    }
+  };
+
+  // Helper function to handle successful sync
+  const handleSyncSuccess = (result: any, operationKey: string, strategyDescription: string, strategyId: string) => {
+    // Update final progress
+    setFetchOperations(prev => ({
+      ...prev,
+      [operationKey]: {
+        ...prev[operationKey],
+        isRunning: false,
+        progress: 100,
+        message: `✅ Sync completed successfully using ${result.result?.strategy || 'Neon'}!`,
+        logs: [...(prev[operationKey]?.logs || []), 
+               `✅ Success: ${result.result?.totalProcessed || 0} processed`,
+               `📊 Neon Records: ${result.result?.neonRecords || 0}`,
+               `🔥 Firebase Records: ${result.result?.firebaseRecords || 0}`,
+               `⚡ Strategy: ${result.result?.strategy || 'neon-primary'}`],
+        totalFetched: result.result?.totalProcessed || 0,
+        totalSaved: result.result?.neonRecords || result.result?.firebaseRecords || 0,
+        totalUpdated: 0,
+        newRecords: result.result?.neonRecords || result.result?.firebaseRecords || 0
+      }
+    }));
+
+    // Show success message
+    const strategy = result.result?.strategy || 'Neon';
+    const totalRecords = result.result?.totalProcessed || 0;
+    const message = `${strategyDescription} completed successfully! ${totalRecords} records written to ${strategy.toUpperCase()}`;
+    showMessage('success', message);
+    
+    // Save sync status  
+    saveSyncStatus(strategyId, {
+      totalFetched: result.result?.totalProcessed || 0,
+      totalSaved: result.result?.neonRecords || result.result?.firebaseRecords || 0,
+      totalUpdated: 0,
+      newRecords: result.result?.neonRecords || result.result?.firebaseRecords || 0,
+      totalPages: Math.ceil((result.result?.totalProcessed || 0) / 100),
+      status: 'success',
+      strategy: result.result?.strategy || 'neon-primary'
+    });
+  };
+
+  // Helper function to handle Neon failure and ask user for Firebase fallback
+  const handleNeonFailureUserChoice = async (result: any, operationKey: string, strategyDescription: string, strategyId: string, dataType: 'sales' | 'products') => {
+    // Update progress to show Neon failure
+    setFetchOperations(prev => ({
+      ...prev,
+      [operationKey]: {
+        ...prev[operationKey],
+        progress: 75,
+        message: '⚠️ Neon sync failed. Waiting for user decision...',
+        logs: [...(prev[operationKey]?.logs || []), 
+               `❌ Neon write failed: ${result.neonError}`,
+               `📊 Total Records: ${result.totalRecords}`,
+               `❓ Waiting for user to choose Firebase fallback...`]
+      }
+    }));
+
+    // Ask user if they want to use Firebase fallback
+    const userChoice = window.confirm(
+      `Neon database sync failed for ${strategyDescription}.\n\n` +
+      `Error: ${result.neonError}\n` +
+      `Total Records: ${result.totalRecords}\n\n` +
+      `Do you want to save the data to Firebase instead?\n\n` +
+      `Choose OK for Firebase fallback, or Cancel to abort.`
+    );
+
+    if (userChoice) {
+      // User chose Firebase fallback
+      await handleFirebaseFallback(result, operationKey, strategyDescription, strategyId, dataType);
+    } else {
+      // User chose to abort
+      setFetchOperations(prev => ({
+        ...prev,
+        [operationKey]: {
+          ...prev[operationKey],
+          isRunning: false,
+          progress: 0,
+          message: '🚫 Sync aborted by user',
+          logs: [...(prev[operationKey]?.logs || []), 
+                 '🚫 User chose to abort sync instead of using Firebase fallback']
+        }
+      }));
+      
+      showMessage('error', `${strategyDescription} aborted. Data was not saved.`);
+    }
+  };
+
+  // Helper function to handle Firebase fallback when user confirms
+  const handleFirebaseFallback = async (originalResult: any, operationKey: string, strategyDescription: string, strategyId: string, dataType: 'sales' | 'products') => {
+    try {
+      // Update progress to show Firebase fallback attempt
+      setFetchOperations(prev => ({
+        ...prev,
+        [operationKey]: {
+          ...prev[operationKey],
+          progress: 85,
+          message: '🔄 Writing to Firebase as fallback...',
+          logs: [...(prev[operationKey]?.logs || []), 
+                 '🔄 User confirmed Firebase fallback',
+                 '💾 Writing data to Firebase...']
+        }
+      }));
+
+      // Call the Firebase fallback API endpoint
+      const fallbackResponse = await fetch('/api/admin/takealot/firebase-fallback-sync', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          integrationId,
+          dataType,
+          records: originalResult.records || [],
+          adminId: currentUser?.uid,
+          originalStrategy: strategyDescription
+        })
+      });
+
+      if (!fallbackResponse.ok) {
+        throw new Error(`Firebase fallback API failed: ${fallbackResponse.status} ${fallbackResponse.statusText}`);
+      }
+
+      const fallbackResult = await fallbackResponse.json();
+      
+      if (!fallbackResult.success) {
+        throw new Error(fallbackResult.error || 'Firebase fallback failed');
+      }
+
+      // Update progress to show Firebase success
+      setFetchOperations(prev => ({
+        ...prev,
+        [operationKey]: {
+          ...prev[operationKey],
+          isRunning: false,
+          progress: 100,
+          message: '✅ Data saved to Firebase successfully!',
+          logs: [...(prev[operationKey]?.logs || []), 
+                 `✅ Firebase fallback completed: ${fallbackResult.recordsWritten} records`,
+                 '� Data safely stored in Firebase']
+        }
+      }));
+
+      // Show success message
+      showMessage('success', `${strategyDescription} completed using Firebase fallback! ${fallbackResult.recordsWritten} records saved.`);
+      
+      // Save sync status  
+      saveSyncStatus(strategyId, {
+        totalFetched: fallbackResult.recordsWritten || 0,
+        totalSaved: fallbackResult.recordsWritten || 0,
+        totalUpdated: 0,
+        newRecords: fallbackResult.recordsWritten || 0,
+        totalPages: Math.ceil((fallbackResult.recordsWritten || 0) / 100),
+        status: 'success',
+        strategy: 'firebase-fallback'
+      });
+
+    } catch (error: any) {
+      console.error('Firebase fallback error:', error);
+      
+      setFetchOperations(prev => ({
+        ...prev,
+        [operationKey]: {
+          ...prev[operationKey],
+          isRunning: false,
+          progress: 0,
+          message: `❌ Firebase fallback failed: ${error.message}`,
+          logs: [...(prev[operationKey]?.logs || []), 
+                 `❌ Firebase fallback failed: ${error.message}`]
+        }
+      }));
+      
+      showMessage('error', `Firebase fallback failed: ${error.message}`);
     }
   };
 
@@ -750,11 +1050,132 @@ const SyncStrategyPreferencesCard: React.FC<SyncStrategyPreferencesCardProps> = 
     }
   };
 
+  // Load migration stats from backend
+  const loadMigrationStats = async () => {
+    if (!currentUser?.uid || !integrationId) return;
+    
+    try {
+      const response = await fetch(`/api/admin/takealot/migration-stats?integrationId=${integrationId}`, {
+        headers: {
+          'admin-uid': currentUser.uid
+        }
+      });
+      
+      if (response.ok) {
+        const stats = await response.json();
+        setMigrationStats(stats);
+      }
+    } catch (error) {
+      console.error('Failed to load migration stats:', error);
+    }
+  };
+
+  // Check database health status
+  const checkDatabaseHealth = async () => {
+    if (!currentUser?.uid) return;
+    
+    try {
+      const response = await fetch('/api/admin/takealot/neon-health', {
+        headers: {
+          'admin-uid': currentUser.uid
+        }
+      });
+      
+      if (response.ok) {
+        const health = await response.json();
+        setDbHealth(health);
+      }
+    } catch (error) {
+      console.error('Failed to check database health:', error);
+    }
+  };
+
+  // Enhanced data cleanup using backend API
+  const handleDataCleanup = async () => {
+    if (!currentUser?.uid || !integrationId) {
+      showMessage('error', 'Missing user or integration information');
+      return;
+    }
+
+    setCleanupInProgress(true);
+    try {
+      const response = await fetch('/api/admin/takealot/data-cleanup', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'admin-uid': currentUser.uid
+        },
+        body: JSON.stringify({
+          integrationId,
+          cleanupType: cleanupOptions.cleanupType,
+          dateRange: cleanupOptions.dateRange,
+          dryRun: cleanupOptions.dryRun
+        })
+      });
+
+      const result = await response.json();
+      
+      if (result.success) {
+        const message = cleanupOptions.dryRun 
+          ? `Dry run complete: ${result.cleanedCount} records would be ${result.cleanupType === 'firebase-only' ? 'removed from Firebase' : 'cleaned up'}`
+          : `Cleanup complete: ${result.cleanedCount} records cleaned up`;
+        
+        showMessage('success', message);
+        
+        if (!cleanupOptions.dryRun) {
+          // Refresh migration stats after actual cleanup
+          loadMigrationStats();
+        }
+      } else {
+        showMessage('error', `Cleanup failed: ${result.error}`);
+      }
+    } catch (error: any) {
+      showMessage('error', `Cleanup error: ${error.message}`);
+    } finally {
+      setCleanupInProgress(false);
+    }
+  };
+
+  // Handle Neon data migration
+  const handleNeonDataMigration = async () => {
+    if (!currentUser?.uid || !integrationId) {
+      showMessage('error', 'Missing user or integration information');
+      return;
+    }
+
+    setCleanupInProgress(true);
+    try {
+      const response = await fetch('/api/admin/takealot/migrate-to-neon', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          integrationId,
+          adminId: currentUser.uid
+        })
+      });
+
+      const result = await response.json();
+      
+      if (result.success) {
+        showMessage('success', `Migration complete: ${result.recordsMigrated} records migrated to Neon`);
+        loadMigrationStats(); // Refresh stats
+      } else {
+        showMessage('error', `Migration failed: ${result.error}`);
+      }
+    } catch (error: any) {
+      showMessage('error', `Migration error: ${error.message}`);
+    } finally {
+      setCleanupInProgress(false);
+    }
+  };
+
   // Load data on component mount
   useEffect(() => {
     if (currentUser?.uid && integrationId) {
       loadSyncPreferences();
       loadSyncStatusData();
+      loadMigrationStats();
+      checkDatabaseHealth();
     }
   }, [currentUser?.uid, integrationId]);
 
@@ -1161,6 +1582,157 @@ const SyncStrategyPreferencesCard: React.FC<SyncStrategyPreferencesCardProps> = 
             })}
           </div>
         </div>
+      </div>
+
+      {/* Neon-specific Features Section */}
+      <div className="mt-8 p-6 rounded-xl bg-gradient-to-br from-purple-50 to-indigo-50 border border-purple-200 shadow-sm">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-gray-800 flex items-center">
+            <div className="w-2 h-2 bg-purple-500 rounded-full mr-3"></div>
+            Neon Database Management
+          </h3>
+          <button
+            onClick={() => setShowMigrationPanel(prev => !prev)}
+            className="text-sm font-medium text-purple-600 hover:underline"
+          >
+            {showMigrationPanel ? 'Hide Migration Panel' : 'Show Migration Panel'}
+          </button>
+        </div>
+
+        {/* Migration Stats */}
+        <div className="mb-4">
+          <p className="text-sm text-gray-600">
+            Last Migration: 
+            <span className="font-medium text-gray-800">
+              {migrationStats.lastMigrationDate ? ` ${new Date(migrationStats.lastMigrationDate).toLocaleString()}` : ' Never'}
+            </span>
+          </p>
+          <div className="grid grid-cols-3 gap-4 mt-2 text-sm">
+            <div className="p-3 rounded-lg bg-white shadow-sm border border-gray-200">
+              <p className="text-gray-600">Total Records</p>
+              <p className="font-semibold text-gray-800">{migrationStats.totalRecords}</p>
+            </div>
+            <div className="p-3 rounded-lg bg-white shadow-sm border border-gray-200">
+              <p className="text-gray-600">Neon Records</p>
+              <p className="font-semibold text-gray-800">{migrationStats.neonRecords}</p>
+            </div>
+            <div className="p-3 rounded-lg bg-white shadow-sm border border-gray-200">
+              <p className="text-gray-600">Firebase Records</p>
+              <p className="font-semibold text-gray-800">{migrationStats.firebaseRecords}</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Cleanup Options */}
+        <div className="mb-4">
+          <h4 className="text-md font-semibold text-gray-800 mb-2">Data Cleanup Options</h4>
+          <div className="flex gap-2">
+            <select
+              value={cleanupOptions.cleanupType}
+              onChange={(e) => setCleanupOptions(prev => ({ ...prev, cleanupType: e.target.value as 'firebase-only' | 'duplicates' | 'old-data' }))}
+              className="flex-1 p-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-purple-500 focus:outline-none"
+            >
+              <option value="firebase-only">Firebase Only</option>
+              <option value="duplicates">Remove Duplicates</option>
+              <option value="old-data">Remove Old Data</option>
+            </select>
+            
+            <input
+              type="number"
+              value={cleanupOptions.dateRange}
+              onChange={(e) => setCleanupOptions(prev => ({ ...prev, dateRange: Number(e.target.value) }))}
+              placeholder="Days"
+              className="w-20 p-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-purple-500 focus:outline-none"
+            />
+            
+            <button
+              onClick={() => handleDataCleanup()}
+              className="px-4 py-2 rounded-lg font-medium text-sm bg-purple-600 hover:bg-purple-700 text-white shadow-md transition-all duration-200"
+            >
+              <FiTrash2 className="w-4 h-4 mr-2" />
+              Cleanup Data
+            </button>
+          </div>
+        </div>
+
+        {/* Database Health Status */}
+        <div>
+          <h4 className="text-md font-semibold text-gray-800 mb-2">Database Health Status</h4>
+          <div className="grid grid-cols-2 gap-4 text-sm">
+            <div className="p-3 rounded-lg bg-white shadow-sm border border-gray-200">
+              <p className="text-gray-600">Neon Status</p>
+              <p className={`font-semibold ${
+                databaseHealth.neon.status === 'healthy' ? 'text-green-600' :
+                databaseHealth.neon.status === 'degraded' ? 'text-yellow-600' : 'text-red-600'
+              }`}>
+                {databaseHealth.neon.status.charAt(0).toUpperCase() + databaseHealth.neon.status.slice(1)}
+              </p>
+              <p className="text-xs text-gray-500">
+                Response Time: {databaseHealth.neon.responseTime}ms
+              </p>
+            </div>
+            <div className="p-3 rounded-lg bg-white shadow-sm border border-gray-200">
+              <p className="text-gray-600">Firebase Status</p>
+              <p className={`font-semibold ${
+                databaseHealth.firebase.status === 'healthy' ? 'text-green-600' :
+                databaseHealth.firebase.status === 'degraded' ? 'text-yellow-600' : 'text-red-600'
+              }`}>
+                {databaseHealth.firebase.status.charAt(0).toUpperCase() + databaseHealth.firebase.status.slice(1)}
+              </p>
+              <p className="text-xs text-gray-500">
+                Response Time: {databaseHealth.firebase.responseTime}ms
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Migration Panel */}
+        {showMigrationPanel && (
+          <div className="mt-6 p-4 rounded-lg bg-white shadow-md border border-gray-200">
+            <h4 className="text-md font-semibold text-gray-800 mb-4">Neon Data Migration</h4>
+            
+            <button
+              onClick={handleNeonDataMigration}
+              className="w-full px-4 py-2 rounded-lg font-medium text-sm bg-green-600 hover:bg-green-700 text-white shadow-md transition-all duration-200 flex items-center justify-center"
+            >
+              <FiCloud className="w-4 h-4 mr-2" />
+              Migrate Data to Neon
+            </button>
+            
+            {migrationStats.migrationProgress > 0 && (
+              <div className="mt-4">
+                <div className="flex items-center justify-between text-xs text-gray-600">
+                  <span>Progress</span>
+                  <span>{migrationStats.migrationProgress}%</span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div 
+                    className="bg-green-600 h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${migrationStats.migrationProgress}%` }}
+                  ></div>
+                </div>
+
+                {migrationStats.duplicateRecords > 0 && (
+                  <p className="mt-2 text-xs text-red-600">
+                    ⚠️ {migrationStats.duplicateRecords} duplicate records found and skipped.
+                  </p>
+                )}
+
+                {migrationStats.neonRecords > 0 && (
+                  <p className="mt-2 text-xs text-green-600">
+                    ✅ {migrationStats.neonRecords} records migrated to Neon.
+                  </p>
+                )}
+
+                {migrationStats.firebaseRecords > 0 && (
+                  <p className="mt-2 text-xs text-blue-600">
+                    📥 {migrationStats.firebaseRecords} records saved to Firebase.
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

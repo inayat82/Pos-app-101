@@ -4,30 +4,43 @@ import React, { useState, useEffect } from 'react';
 import { FiSearch, FiRefreshCw, FiPackage, FiExternalLink, FiEye, FiFilter, FiX, FiEdit } from 'react-icons/fi';
 import { useAuth } from '@/context/AuthContext';
 import { usePageTitle } from '@/context/PageTitleContext';
-import { db } from '@/lib/firebase/firebase';
-import { collection, query, where, getDocs } from 'firebase/firestore';
 
 interface Product {
+  id?: number;
+  tsin_id?: string;
   sku: string;
   title: string;
   price: number;
   sell_price?: number;
+  selling_price?: number;
   rrp?: number;
   stock: number;
+  stock_at_takealot_total?: number;
   status: string;
   image_url?: string;
-  tsin_id?: string;
-  // Additional fields for detailed view
+  offer_url?: string;
+  // Stock breakdown
   stock_dbn?: number;
   stock_cpt?: number;
   stock_jhb?: number;
   stock_on_way?: number;
-  // New fields for enhanced functionality
+  total_stock_on_way?: number;
+  // POS integration
   pos_barcode?: string;
-  qty_require?: number; // estimated
+  // Calculated metrics
+  qty_require?: number;
   total_sold?: number;
   sold_30_days?: number;
   returned_30_days?: number;
+  avg_selling_price?: number;
+  return_rate?: number;
+  days_since_last_order?: number;
+  // Metadata
+  calculation_method?: string;
+  metrics_last_calculated?: string | null;
+  has_tsin_metrics?: boolean;
+  has_legacy_metrics?: boolean;
+  last_calculation_at?: Date;
   [key: string]: any;
 }
 
@@ -37,18 +50,26 @@ export default function TakealotProductsPage({ params }: { params: Promise<{ int
   
   // Fix for Next.js 15 - params are now async
   const resolvedParams = React.use(params);
-  const { integrationId } = resolvedParams;const [products, setProducts] = useState<Product[]>([]);
+  const { integrationId } = resolvedParams;
+  
+  const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage, setItemsPerPage] = useState(100);const [showFilters, setShowFilters] = useState(false);
+  const [itemsPerPage, setItemsPerPage] = useState(20); // Changed default from 100 to 20
+  
+  const [showFilters, setShowFilters] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-  const [showProductModal, setShowProductModal] = useState(false);  const [filters, setFilters] = useState({
+  const [showProductModal, setShowProductModal] = useState(false);
+  
+  const [filters, setFilters] = useState({
     status: ['Buyable', 'Not Buyable'], // Default to show only Buyable and Not Buyable
   });
   const [tempFilters, setTempFilters] = useState({
     status: ['Buyable', 'Not Buyable'], // Temporary filters for the filter panel
-  });  const [sortBy, setSortBy] = useState('sold_30_days');
+  });
+  
+  const [sortBy, setSortBy] = useState('sold_30_days');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
 
   useEffect(() => {
@@ -65,104 +86,102 @@ export default function TakealotProductsPage({ params }: { params: Promise<{ int
   const loadProducts = async () => {
     try {
       setLoading(true);
-      console.log('Loading products for integration:', integrationId);
+      console.log('Loading products from optimized Neon API for integration:', integrationId);
 
-      // Try takealot_offers first
-      const offersQuery = query(
-        collection(db, 'takealot_offers'),
-        where('integrationId', '==', integrationId)
-      );
+      // Call the new paginated API route for better performance
+      const response = await fetch('/api/admin/takealot/get-products-paginated', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          integrationId,
+          adminId: currentUser?.uid,
+          page: currentPage,
+          limit: itemsPerPage,
+          filters: {
+            search: searchTerm,
+            status: filters.status,
+            sortBy,
+            sortOrder
+          }
+        })
+      });
+
+      const data = await response.json();
       
-      const offersSnapshot = await getDocs(offersQuery);
-      console.log('Found in takealot_offers:', offersSnapshot.size);      if (offersSnapshot.size > 0) {        const productData = offersSnapshot.docs.map(doc => {
-          const data = doc.data();
-          
-          // Safely extract warehouse stock data from arrays
-          const stockAtTakealot = data.stock_at_takealot || [];
-          const stockOnWay = data.stock_on_way || [];
-          const salesUnits = data.sales_units || [];
-            return {
-            sku: data.sku || data.product_label_number || 'N/A',
-            title: data.title || 'Unnamed Product',
-            price: data.selling_price || 0,
-            sell_price: data.selling_price || 0,
-            rrp: data.rrp || 0,
-            stock: data.stock_at_takealot_total || 0,
-            status: data.status || 'Unknown',
-            image_url: data.image_url,
-            tsin_id: data.tsin_id,
-            // Additional fields for detailed view - extracted from arrays
-            stock_dbn: stockAtTakealot.find((s: any) => s.warehouse?.name === 'DBN')?.quantity_available || 0,
-            stock_cpt: stockAtTakealot.find((s: any) => s.warehouse?.name === 'CPT')?.quantity_available || 0,
-            stock_jhb: stockAtTakealot.find((s: any) => s.warehouse?.name === 'JHB')?.quantity_available || 0,            stock_on_way: data.total_stock_on_way || 0,
-            // POS integration fields
-            pos_barcode: data.barcode || '', // Use API barcode as placeholder            // CALCULATED METRICS (prioritize root level calculated fields from TSIN calculation)
-            qty_require: data.quantity_required || data.tsinCalculatedMetrics?.qtyRequire || data.calculatedMetrics?.qtyRequire || data.qtyRequire || 0,
-            total_sold: data.total_sold || data.tsinCalculatedMetrics?.totalSold || data.calculatedMetrics?.totalSold || data.totalSold || 0,
-            sold_30_days: data.last_30_days_sold || data.tsinCalculatedMetrics?.last30DaysSold || data.calculatedMetrics?.last30DaysSold || data.last30DaysSold || 0,
-            returned_30_days: data.last_30_days_return || data.tsinCalculatedMetrics?.last30DaysReturn || data.calculatedMetrics?.last30DaysReturn || data.last30DaysReturn || 0,
-            avg_selling_price: data.avg_selling_price || data.tsinCalculatedMetrics?.avgSellingPrice || data.calculatedMetrics?.avgSellingPrice || data.avgSellingPrice || data.selling_price || 0,
-            return_rate: data.return_rate || data.tsinCalculatedMetrics?.returnRate || data.calculatedMetrics?.returnRate || data.returnRate || 0,
-            days_since_last_order: data.days_since_last_order || data.tsinCalculatedMetrics?.daysSinceLastOrder || data.calculatedMetrics?.daysSinceLastOrder || data.daysSinceLastOrder || 999,
-            // Metadata for tracking calculations (IMPORTANT FOR DEBUGGING)
-            calculation_method: data.calculationMethod || (data.tsinCalculatedMetrics ? 'TSIN-based' : 'Legacy'),
-            metrics_last_calculated: data.lastTsinCalculation || data.tsinCalculatedMetrics?.lastCalculated || data.calculatedMetrics?.lastCalculated || null,
-            has_tsin_metrics: !!data.lastTsinCalculation || !!data.tsinCalculatedMetrics,
-            has_legacy_metrics: !!data.calculatedMetrics,
-          };
-        });
-        setProducts(productData);
-      } else {
-        // Try takealotProducts as fallback
-        const productsQuery = query(
-          collection(db, 'takealotProducts'),
-          where('integrationId', '==', integrationId)
-        );
-        
-        const productsSnapshot = await getDocs(productsQuery);
-        console.log('Found in takealotProducts:', productsSnapshot.size);        const productData = productsSnapshot.docs.map(doc => {
-          const data = doc.data();
-          
-          // Safely extract warehouse stock data from arrays
-          const stockAtTakealot = data.stock_at_takealot || [];
-          const stockOnWay = data.stock_on_way || [];
-          const salesUnits = data.sales_units || [];
-            return {
-            sku: data.sku || data.product_label_number || 'N/A',
-            title: data.title || 'Unnamed Product',
-            price: data.selling_price || 0,
-            sell_price: data.selling_price || 0,
-            rrp: data.rrp || 0,
-            stock: data.stock_at_takealot_total || 0,
-            status: data.status || 'Unknown',
-            image_url: data.image_url,
-            tsin_id: data.tsin_id,
-            // Additional fields for detailed view - extracted from arrays
-            stock_dbn: stockAtTakealot.find((s: any) => s.warehouse?.name === 'DBN')?.quantity_available || 0,
-            stock_cpt: stockAtTakealot.find((s: any) => s.warehouse?.name === 'CPT')?.quantity_available || 0,
-            stock_jhb: stockAtTakealot.find((s: any) => s.warehouse?.name === 'JHB')?.quantity_available || 0,
-            stock_on_way: data.total_stock_on_way || 0,
-            // POS integration fields
-            pos_barcode: data.barcode || '', // Use API barcode as placeholder            // CALCULATED METRICS (prioritize root level calculated fields from TSIN calculation)
-            qty_require: data.quantity_required || data.qtyRequire || data.calculatedMetrics?.qtyRequire || 0,
-            total_sold: data.total_sold || data.totalSold || data.calculatedMetrics?.totalSold || 0,
-            sold_30_days: data.last_30_days_sold || data.last30DaysSold || data.calculatedMetrics?.last30DaysSold || 0,
-            returned_30_days: data.last_30_days_return || data.last30DaysReturn || data.calculatedMetrics?.last30DaysReturn || 0,
-            avg_selling_price: data.avg_selling_price || data.avgSellingPrice || data.calculatedMetrics?.avgSellingPrice || data.selling_price || 0,
-            return_rate: data.return_rate || data.returnRate || data.calculatedMetrics?.returnRate || 0,
-            days_since_last_order: data.days_since_last_order || data.daysSinceLastOrder || data.calculatedMetrics?.daysSinceLastOrder || 999,
-            // Metadata for tracking calculations
-            metrics_last_calculated: data.lastTsinCalculation || data.metricsLastCalculated || data.calculatedMetrics?.lastCalculated || null,
-          };});        
-        // Set products with calculated data
-        setProducts(productData);
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Failed to fetch products');
+      }
+
+      console.log('Found products in optimized Neon API:', data.data.length);
+
+      // Transform enhanced Neon data to match frontend interface
+      const productData = data.data.map((product: any) => {
+        return {
+          id: product.id,
+          sku: product.sku || 'N/A',
+          title: product.product_title || 'Unnamed Product',
+          price: product.current_price || 0,
+          sell_price: product.current_price || 0,
+          selling_price: product.current_price || 0,
+          rrp: product.original_price || 0,
+          stock: product.stock_quantity || 0,
+          stock_at_takealot_total: product.stock_quantity || 0,
+          status: product.offer_status || 'Unknown',
+          image_url: product.offer_details?.image_url,
+          tsin_id: product.offer_details?.tsin_id,
+          offer_url: product.offer_details?.offer_url,
+          offer_id: product.offer_id,
+          // Analytics from optimized query
+          views: product.views || 0,
+          clicks: product.clicks || 0,
+          conversion_rate: product.conversion_rate || 0,
+          category_path: product.category_path,
+          brand: product.brand,
+          is_active: product.is_active || false,
+          visibility: product.visibility,
+          promotion_type: product.promotion_type,
+          // Enhanced sales analytics
+          qty_require: product.qty_require || 0,
+          total_sold: product.total_sold || 0,
+          sold_30_days: product.sold_30_days || 0,
+          returned_30_days: 0,
+          avg_selling_price: product.avg_selling_price || product.current_price || 0,
+          return_rate: product.return_rate || 0,
+          days_since_last_order: product.days_since_last_order || 999,
+          sales_count: product.sales_count || 0,
+          sales_30_days: product.sales_30_days || 0,
+          total_revenue: product.total_revenue || 0,
+          last_sale_date: product.last_sale_date,
+          // Performance indicators
+          is_bestseller: product.is_bestseller || false,
+          is_slow_moving: product.is_slow_moving || false,
+          needs_restock: product.needs_restock || false,
+          // Metadata for tracking calculations
+          calculation_method: 'Optimized-Paginated-API',
+          metrics_last_calculated: product.updated_at,
+          has_tsin_metrics: true,
+          has_legacy_metrics: false,
+          last_calculation_at: product.updated_at,
+        };
+      });
+
+      setProducts(productData);
+      console.log('Successfully loaded optimized products:', productData.length);
+      
+      // Update pagination info if available
+      if (data.pagination) {
+        console.log('Pagination info:', data.pagination);
       }
 
     } catch (error) {
-      console.error('Error loading products:', error);
+      console.error('Error loading optimized products:', error);
+      setProducts([]);
     } finally {
       setLoading(false);
-    }  };
+    }
+  };
 
   // Enhanced filtering and sorting function
   const filteredAndSortedProducts = () => {
@@ -202,28 +221,28 @@ export default function TakealotProductsPage({ params }: { params: Promise<{ int
           aValue = a.title.toLowerCase();
           bValue = b.title.toLowerCase();
           break;        case 'price':
-          aValue = a.selling_price || a.sell_price || a.price || 0;
-          bValue = b.selling_price || b.sell_price || b.price || 0;
+          aValue = parseFloat(String(a.selling_price || a.sell_price || a.price || 0));
+          bValue = parseFloat(String(b.selling_price || b.sell_price || b.price || 0));
           break;
         case 'rrp':
-          aValue = a.rrp || 0;
-          bValue = b.rrp || 0;
+          aValue = parseFloat(String(a.rrp || 0));
+          bValue = parseFloat(String(b.rrp || 0));
           break;
         case 'stock':
-          aValue = a.stock || 0;
-          bValue = b.stock || 0;
+          aValue = parseInt(String(a.stock || 0));
+          bValue = parseInt(String(b.stock || 0));
           break;
         case 'total_sold':
-          aValue = a.total_sold || 0;
-          bValue = b.total_sold || 0;
+          aValue = parseInt(String(a.total_sold || 0));
+          bValue = parseInt(String(b.total_sold || 0));
           break;
         case 'sold_30_days':
-          aValue = a.sold_30_days || 0;
-          bValue = b.sold_30_days || 0;
+          aValue = parseInt(String(a.sold_30_days || 0));
+          bValue = parseInt(String(b.sold_30_days || 0));
           break;
         case 'returned_30_days':
-          aValue = a.returned_30_days || 0;
-          bValue = b.returned_30_days || 0;
+          aValue = parseInt(String(a.returned_30_days || 0));
+          bValue = parseInt(String(b.returned_30_days || 0));
           break;
         case 'status':
           aValue = a.status.toLowerCase();
@@ -255,6 +274,13 @@ export default function TakealotProductsPage({ params }: { params: Promise<{ int
   };
 
   const filteredProducts = filteredAndSortedProducts();
+
+  // Format price helper function - handles both string and number inputs
+  const formatPrice = (price: number | string) => {
+    const numPrice = typeof price === 'string' ? parseFloat(price) : price;
+    if (isNaN(numPrice)) return 'R0.00';
+    return `R${numPrice.toFixed(2)}`;
+  };
 
   // Get status badge with proper colors
   const getStatusBadge = (status: string) => {
@@ -302,14 +328,18 @@ export default function TakealotProductsPage({ params }: { params: Promise<{ int
   // Reset to page 1 when search changes
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, itemsPerPage, filters]);const openProduct = (product: Product) => {
-    if (product.tsin_id) {
-      window.open(`https://www.takealot.com/p/${product.tsin_id}`, '_blank');
+  }, [searchTerm, itemsPerPage, filters]);  const openProduct = (product: Product) => {
+    // Use the correct offer_url if available, otherwise fallback to generic URL
+    if (product.offer_url) {
+      window.open(product.offer_url, '_blank', 'noopener,noreferrer');
+    } else if (product.tsin_id) {
+      window.open(`https://www.takealot.com/p/${product.tsin_id}`, '_blank', 'noopener,noreferrer');
     } else {
       // Fallback: try to construct URL from SKU or show alert
-      console.log('No TSIN available for product:', product.sku);
+      console.log('No TSIN or offer URL available for product:', product.sku);
+      alert('Product URL not available');
     }
-  };  const viewProductDetails = (product: Product) => {
+  };const viewProductDetails = (product: Product) => {
     setSelectedProduct(product);
     setShowProductModal(true);
   };
@@ -344,6 +374,11 @@ export default function TakealotProductsPage({ params }: { params: Promise<{ int
                   {filteredProducts.length !== products.length && (
                     <span className="text-sm text-blue-600 ml-1">
                       (filtered from {products.length} total)
+                    </span>
+                  )}
+                  {totalPages > 1 && (
+                    <span className="text-sm text-gray-500 ml-1">
+                      • Page {currentPage} of {totalPages}
                     </span>
                   )}
                 </p>
@@ -403,11 +438,11 @@ export default function TakealotProductsPage({ params }: { params: Promise<{ int
               <select
                 value={itemsPerPage}
                 onChange={(e) => setItemsPerPage(Number(e.target.value))}
-                className="border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500"
+                className="border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               >
+                <option value={20}>20 (default)</option>
                 <option value={50}>50</option>
                 <option value={100}>100</option>
-                <option value={200}>200</option>
               </select>
               <span className="text-sm text-gray-700">per page</span>
             </div>
@@ -588,11 +623,11 @@ export default function TakealotProductsPage({ params }: { params: Promise<{ int
                       </td>
                       
                       <td className="px-4 py-4 text-sm font-medium text-gray-900">
-                        R{(product.selling_price || product.sell_price || product.price || 0).toFixed(2)}
+                        {formatPrice(product.selling_price || product.sell_price || product.price || 0)}
                       </td>
                       
                       <td className="px-4 py-4 text-sm text-gray-900">
-                        R{(product.rrp || 0).toFixed(2)}
+                        {formatPrice(product.rrp || 0)}
                       </td>
                       
                       <td className="px-4 py-4 text-sm text-gray-900">
@@ -690,32 +725,59 @@ export default function TakealotProductsPage({ params }: { params: Promise<{ int
               </table>
             </div>
             
-            {/* Pagination */}
+            {/* Enhanced Pagination */}
             {totalPages > 1 && (
-              <div className="px-6 py-4 border-t border-gray-200 bg-gray-50 flex items-center justify-between">
-                <div className="flex items-center text-sm text-gray-700">
-                  <span>
-                    Showing {startIndex + 1} to {Math.min(endIndex, filteredProducts.length)} of {filteredProducts.length} products
-                  </span>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <button
-                    onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
-                    disabled={currentPage === 1}
-                    className="px-3 py-1 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Previous
-                  </button>
-                  <span className="px-3 py-1 text-sm font-medium text-gray-700">
-                    Page {currentPage} of {totalPages}
-                  </span>
-                  <button
-                    onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
-                    disabled={currentPage === totalPages}
-                    className="px-3 py-1 text-sm font-medium text-white bg-blue-600 border border-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    Next
-                  </button>
+              <div className="px-6 py-4 border-t border-gray-200 bg-gray-50">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                  {/* Results Summary */}
+                  <div className="flex items-center text-sm text-gray-700">
+                    <span>
+                      Showing <span className="font-medium">{startIndex + 1}</span> to <span className="font-medium">{Math.min(endIndex, filteredProducts.length)}</span> of <span className="font-medium">{filteredProducts.length}</span> products
+                      <span className="text-gray-500 ml-1">({itemsPerPage} per page)</span>
+                    </span>
+                  </div>
+                  
+                  {/* Pagination Controls */}
+                  <div className="flex items-center space-x-1">
+                    <button
+                      onClick={() => setCurrentPage(1)}
+                      disabled={currentPage === 1}
+                      className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-l-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      title="First page"
+                    >
+                      First
+                    </button>
+                    <button
+                      onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                      disabled={currentPage === 1}
+                      className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border-t border-b border-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      title="Previous page"
+                    >
+                      Previous
+                    </button>
+                    
+                    {/* Page Numbers */}
+                    <div className="flex items-center px-4 py-2 text-sm font-medium text-gray-700 bg-blue-50 border-t border-b border-blue-200">
+                      Page <span className="mx-1 font-bold text-blue-600">{currentPage}</span> of <span className="ml-1 font-bold">{totalPages}</span>
+                    </div>
+                    
+                    <button
+                      onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+                      disabled={currentPage === totalPages}
+                      className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border-t border-b border-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      title="Next page"
+                    >
+                      Next
+                    </button>
+                    <button
+                      onClick={() => setCurrentPage(totalPages)}
+                      disabled={currentPage === totalPages}
+                      className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-r-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      title="Last page"
+                    >
+                      Last
+                    </button>
+                  </div>
                 </div>
               </div>
             )}

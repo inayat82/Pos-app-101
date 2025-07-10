@@ -14,6 +14,9 @@ export interface ScrapedProductData {
     rating?: number;
   }>;
   availability: 'in-stock' | 'out-of-stock' | 'limited' | 'unknown';
+  title?: string | null;
+  imageUrl?: string | null;
+  breadcrumbs?: string[];
   scrapedAt: Date;
   proxyUsed: string;
   duration: number;
@@ -30,12 +33,12 @@ class TakealotScrapingService {
   /**
    * Scrape product data from Takealot using Webshare proxy
    */
-  async scrapeProduct(tsin: string): Promise<ScrapingResult> {
+  async scrapeProduct(tsin: string, forceLive: boolean = false, offerUrl?: string): Promise<ScrapingResult> {
     const startTime = Date.now();
     
     try {
       // Make request through Webshare proxy
-      const proxyResponse = await autoPriceWebshareService.scrapeTakealotProduct(tsin);
+      const proxyResponse = await autoPriceWebshareService.scrapeTakealotProduct(tsin, forceLive, offerUrl);
       
       if (!proxyResponse.success) {
         return {
@@ -46,6 +49,13 @@ class TakealotScrapingService {
 
       // Parse HTML content
       const html = proxyResponse.data;
+      if (!html) {
+        return {
+          success: false,
+          error: 'No HTML content received from proxy'
+        };
+      }
+      
       const scrapedData = await this.parseProductHTML(html, tsin);
       
       const duration = Date.now() - startTime;
@@ -89,6 +99,11 @@ class TakealotScrapingService {
       // Extract availability
       const availability = this.extractAvailabilityWithCheerio($);
 
+      // Extract title and image
+      const title = this.extractTitleWithCheerio($);
+      const imageUrl = this.extractImageUrlWithCheerio($);
+      const breadcrumbs = this.extractBreadcrumbsWithCheerio($);
+
       return {
         rating,
         reviewCount,
@@ -96,7 +111,10 @@ class TakealotScrapingService {
         winnerPrice: sellerInfo.winnerPrice,
         totalSellers: sellerInfo.totalSellers,
         competitors: sellerInfo.competitors,
-        availability
+        availability,
+        title,
+        imageUrl,
+        breadcrumbs
       };
 
     } catch (parseError) {
@@ -108,7 +126,10 @@ class TakealotScrapingService {
         winnerPrice: null,
         totalSellers: 0,
         competitors: [],
-        availability: 'unknown'
+        availability: 'unknown',
+        title: null,
+        imageUrl: null,
+        breadcrumbs: []
       };
     }
   }
@@ -117,6 +138,15 @@ class TakealotScrapingService {
    * Extract product rating using Cheerio
    */
   private extractRatingWithCheerio($: ReturnType<typeof cheerio.load>): number | null {
+    // Check for mock data format first
+    const mockRating = $('.rating-score').text().trim();
+    if (mockRating) {
+      const rating = parseFloat(mockRating);
+      if (!isNaN(rating)) {
+        return Math.round(rating * 10) / 10;
+      }
+    }
+
     // Try multiple selectors for rating
     const selectors = [
       '[data-ref="rating-value"]',
@@ -181,6 +211,15 @@ class TakealotScrapingService {
    * Extract review count using Cheerio
    */
   private extractReviewCountWithCheerio($: ReturnType<typeof cheerio.load>): number | null {
+    // Check for mock data format first
+    const mockReviewCount = $('.rating-count').text().trim();
+    if (mockReviewCount) {
+      const count = parseInt(mockReviewCount.replace(/[^\d]/g, ''));
+      if (!isNaN(count)) {
+        return count;
+      }
+    }
+
     const selectors = [
       '[data-ref="review-count"]',
       '.review-count',
@@ -370,6 +409,32 @@ class TakealotScrapingService {
   } {
     const competitors: Array<{ seller: string; price: number; rating?: number }> = [];
     
+    // Check for mock data format first
+    const mockSellerName = $('.seller-name').text().trim();
+    const mockSellerPriceText = $('.seller-price').text().trim();
+    const mockMainPriceText = $('.price').text().trim();
+    
+    if (mockSellerName && (mockSellerPriceText || mockMainPriceText)) {
+      const priceText = mockSellerPriceText || mockMainPriceText;
+      const priceMatch = priceText.match(/R?[\s]*(\d+(?:,\d{3})*(?:\.\d{2})?)/);
+      
+      if (priceMatch) {
+        const price = parseFloat(priceMatch[1].replace(/,/g, ''));
+        if (!isNaN(price)) {
+          return {
+            winnerSeller: mockSellerName,
+            winnerPrice: price,
+            totalSellers: 1,
+            competitors: [{
+              seller: mockSellerName,
+              price: price,
+              rating: 4.5
+            }]
+          };
+        }
+      }
+    }
+    
     // Try to find price selectors
     const priceSelectors = [
       '[data-ref="price-current"]',
@@ -460,6 +525,21 @@ class TakealotScrapingService {
    * Extract availability status using Cheerio
    */
   private extractAvailabilityWithCheerio($: ReturnType<typeof cheerio.load>): 'in-stock' | 'out-of-stock' | 'limited' | 'unknown' {
+    // Check for mock data format first
+    const mockStockStatus = $('.stock-status').text().trim();
+    if (mockStockStatus) {
+      const status = mockStockStatus.toLowerCase();
+      if (status.includes('in-stock') || status === 'in-stock') {
+        return 'in-stock';
+      }
+      if (status.includes('out-of-stock') || status === 'out-of-stock') {
+        return 'out-of-stock';
+      }
+      if (status.includes('limited') || status === 'limited') {
+        return 'limited';
+      }
+    }
+    
     // Try specific selectors first
     const availabilitySelectors = [
       '[data-ref="availability"]',
@@ -575,6 +655,137 @@ class TakealotScrapingService {
     }
 
     return results;
+  }
+
+  /**
+   * Extract product title using Cheerio
+   */
+  private extractTitleWithCheerio($: ReturnType<typeof cheerio.load>): string | null {
+    // Try multiple selectors for title
+    const selectors = [
+      'h1.product-title',
+      'h1[data-ref="product-title"]',
+      '.product-listing h1',
+      'title',
+      'h1',
+      '[data-testid="product-title"]',
+      '.pdp-product-title',
+      'meta[property="og:title"]'
+    ];
+
+    for (const selector of selectors) {
+      try {
+        const element = $(selector).first();
+        if (element.length > 0) {
+          let title = element.text().trim();
+          
+          // If it's the title tag, remove "| Takealot" suffix
+          if (selector === 'title') {
+            title = title.replace(/\s*\|\s*Takealot.*$/i, '');
+          }
+          
+          if (title && title.length > 3) {
+            return title;
+          }
+        }
+      } catch (e) {
+        continue;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Extract product image URL using Cheerio
+   */
+  private extractImageUrlWithCheerio($: ReturnType<typeof cheerio.load>): string | null {
+    // Try multiple selectors for main product image
+    const selectors = [
+      '.product-main-image img',
+      '[data-ref="product-image"] img',
+      '.product-listing img',
+      '.pdp-product-image img',
+      '.gallery-main img',
+      'meta[property="og:image"]',
+      'img[data-testid="product-image"]'
+    ];
+
+    for (const selector of selectors) {
+      try {
+        const element = $(selector).first();
+        if (element.length > 0) {
+          let imageUrl = element.attr('src') || element.attr('data-src') || element.attr('content');
+          
+          if (imageUrl) {
+            // Ensure it's a full URL
+            if (imageUrl.startsWith('//')) {
+              imageUrl = 'https:' + imageUrl;
+            } else if (imageUrl.startsWith('/')) {
+              imageUrl = 'https://www.takealot.com' + imageUrl;
+            }
+            
+            return imageUrl;
+          }
+        }
+      } catch (e) {
+        continue;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Extract breadcrumbs using Cheerio
+   */
+  private extractBreadcrumbsWithCheerio($: ReturnType<typeof cheerio.load>): string[] {
+    const breadcrumbs: string[] = [];
+
+    // Try multiple selectors for breadcrumbs
+    const selectors = [
+      '.breadcrumbs',
+      '[data-ref="breadcrumbs"]',
+      '.breadcrumb',
+      '.navigation-breadcrumbs',
+      'nav[aria-label="breadcrumb"]'
+    ];
+
+    for (const selector of selectors) {
+      try {
+        const element = $(selector).first();
+        if (element.length > 0) {
+          const text = element.text().trim();
+          
+          if (text.includes('>')) {
+            // Split by > and clean up
+            const parts = text.split('>').map(part => part.trim()).filter(part => part);
+            if (parts.length > 0) {
+              return parts;
+            }
+          } else if (text) {
+            // Single breadcrumb item
+            breadcrumbs.push(text);
+          }
+        }
+      } catch (e) {
+        continue;
+      }
+    }
+
+    // Try to extract from individual breadcrumb links
+    try {
+      $('.breadcrumbs a, .breadcrumb a').each((i, el) => {
+        const text = $(el).text().trim();
+        if (text) {
+          breadcrumbs.push(text);
+        }
+      });
+    } catch (e) {
+      // Ignore
+    }
+
+    return breadcrumbs;
   }
 }
 

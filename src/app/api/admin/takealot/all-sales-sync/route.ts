@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { dbAdmin as db } from '@/lib/firebase/firebaseAdmin';
 import { SalesSyncService } from '@/lib/salesSyncService';
+import { EnhancedSyncService } from '@/lib/enhancedSyncService';
 import { cronJobLogger } from '@/lib/cronJobLogger';
 import { TakealotProxyService, takealotProxyService } from '@/modules/takealot/services/proxy.service';
 import { Timestamp, FieldValue } from 'firebase-admin/firestore';

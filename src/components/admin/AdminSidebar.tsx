@@ -26,6 +26,7 @@ import {
   LinkIcon,
   DocumentTextIcon,
   AdjustmentsHorizontalIcon,
+  DocumentCheckIcon,
 } from '@heroicons/react/24/outline';
 import { FiAlertOctagon } from 'react-icons/fi';
 
@@ -324,6 +325,15 @@ const AdminSidebar: React.FC = () => {
                         >
                           <DocumentTextIcon className={subIconClass(currentPathname === `/admin/takealot/${integration.id}/reports`)} />
                           Reports
+                        </Link>
+                      </li>
+                      <li>
+                        <Link 
+                          href={`/admin/takealot/${integration.id}/recon-invoice`} 
+                          className={subMenuItemClass(currentPathname === `/admin/takealot/${integration.id}/recon-invoice`)}
+                        >
+                          <DocumentCheckIcon className={subIconClass(currentPathname === `/admin/takealot/${integration.id}/recon-invoice`)} />
+                          Recon Invoice
                         </Link>
                       </li>
                       <li>

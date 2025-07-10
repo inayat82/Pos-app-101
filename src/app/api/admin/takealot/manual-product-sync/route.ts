@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { dbAdmin as db } from '@/lib/firebase/firebaseAdmin';
 import { ProductSyncService } from '@/lib/productSyncService';
+import { EnhancedSyncService } from '@/lib/enhancedSyncService';
 
 export async function POST(request: NextRequest) {
   try {
@@ -36,28 +37,51 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    // Initialize the Product Sync Service
-    const productSyncService = new ProductSyncService(integrationId);
+    // Initialize the Enhanced Sync Service (dual-write enabled)
+    const accountName = integrationData?.accountName || 'Takealot';
+    const enhancedSyncService = new EnhancedSyncService(adminId, integrationId, accountName);
     
-    // Perform the sync
-    const result = await productSyncService.syncProducts(
+    // Perform the sync using enhanced service (Neon first, user choice for Firebase fallback)
+    console.log(`[Manual Product Sync] Using Neon-first sync for ${integrationId}`);
+    const result = await enhancedSyncService.syncProducts(
       apiKey,
       strategy,
-      'manual',
-      adminId
+      'manual'
     );
 
-    return NextResponse.json({
-      success: true,
-      message: `Product sync completed for ${strategy}`,
-      result: {
-        totalProcessed: result.totalProcessed,
-        totalNew: result.totalNew,
-        totalUpdated: result.totalUpdated,
-        totalErrors: result.totalErrors,
-        totalSkipped: result.totalSkipped
-      }
-    });
+    // Handle the result based on whether Neon succeeded or failed
+    if (result.success) {
+      return NextResponse.json({
+        success: true,
+        message: `Product sync completed successfully using ${result.strategy}`,
+        result: {
+          totalProcessed: result.totalRecords,
+          neonRecords: result.neonRecords,
+          firebaseRecords: result.firebaseRecords,
+          strategy: result.strategy,
+          timeTaken: result.timeTaken,
+          warnings: result.warnings
+        }
+      });
+    } else if (result.needsUserChoice) {
+      // Neon failed, ask user if they want Firebase fallback
+      return NextResponse.json({
+        success: false,
+        needsUserChoice: true,
+        message: 'Neon sync failed. Do you want to use Firebase as fallback?',
+        error: result.neonError,
+        totalRecords: result.totalRecords,
+        neonError: result.neonError
+      }, { status: 206 }); // 206 Partial Content - indicates user choice needed
+    } else {
+      // Complete failure
+      return NextResponse.json({
+        success: false,
+        message: 'Product sync failed completely',
+        error: result.errors.join(', '),
+        details: result
+      }, { status: 500 });
+    }
 
   } catch (error: any) {
     console.error('Manual product sync error:', error);
